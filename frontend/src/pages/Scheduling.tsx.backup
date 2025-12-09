@@ -1,0 +1,452 @@
+import React, { useState, useRef, useEffect } from 'react'
+import { useTimeline } from '../hooks/useTimeline'
+
+type WorkOrder = {
+  id: string
+  orderId: string
+  productId: string
+  machineId: number
+  startHour: number
+  endHour: number
+  status: 'running' | 'idle'
+  aiLocked: boolean
+}
+
+type DowntimeSlot = {
+  id: string
+  machineId: number
+  startHour: number
+  endHour: number
+}
+
+type ViewMode = 'machine' | 'order'
+
+type DragState = {
+  order: WorkOrder
+  offsetX: number
+  startTime: number
+}
+
+export default function SchedulingPage() {
+  const timeline = useTimeline()
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0])
+  const [viewMode, setViewMode] = useState<ViewMode>('machine')
+  const [filteredStatus, setFilteredStatus] = useState<'all' | 'running' | 'idle'>('all')
+  const [dragState, setDragState] = useState<DragState | null>(null)
+  const [snapLineX, setSnapLineX] = useState<number | null>(null)
+  const [dragTooltip, setDragTooltip] = useState<{ x: number; y: number; start: number; end: number; duration: number } | null>(null)
+
+  const machines = [1, 2, 3, 4]
+  const MACHINE_ROW_HEIGHT = 120 // Height of each machine row in pixels
+  const MACHINE_LABEL_WIDTH = 120 // Width of machine label column
+
+  // 機台停機時段
+  const downtimeSlots: DowntimeSlot[] = [
+    {
+      id: 'down-001',
+      machineId: 2,
+      startHour: 15,
+      endHour: 18
+    }
+  ]
+
+  // Mock scheduling data
+  const [workOrders, setWorkOrders] = React.useState<WorkOrder[]>([
+    {
+      id: 'wo-001',
+      orderId: 'ORD-2024-001',
+      productId: 'P-500A',
+      machineId: 1,
+      startHour: 8,
+      endHour: 11,
+      status: 'running',
+      aiLocked: false
+    },
+    {
+      id: 'wo-002',
+      orderId: 'ORD-2024-002',
+      productId: 'P-300B',
+      machineId: 1,
+      startHour: 13,
+      endHour: 15,
+      status: 'idle',
+      aiLocked: true
+    },
+    {
+      id: 'wo-003',
+      orderId: 'ORD-2024-003',
+      productId: 'P-200C',
+      machineId: 2,
+      startHour: 9,
+      endHour: 12,
+      status: 'running',
+      aiLocked: false
+    },
+    {
+      id: 'wo-004',
+      orderId: 'ORD-2024-004',
+      productId: 'P-800A',
+      machineId: 3,
+      startHour: 14,
+      endHour: 17,
+      status: 'running',
+      aiLocked: false
+    },
+    {
+      id: 'wo-005',
+      orderId: 'ORD-2024-005',
+      productId: 'P-100D',
+      machineId: 4,
+      startHour: 10,
+      endHour: 13,
+      status: 'idle',
+      aiLocked: true
+    }
+  ])
+
+  const machines = [1, 2, 3, 4]
+  const hours = Array.from({ length: 12 }, (_, i) => ({
+    id: i + 8,
+    label: `${String(i + 8).padStart(2, '0')}:00`,
+    start: i + 8,
+    end: i + 9
+  }))
+
+  const getStatusColor = (status: string) => {
+    const colors = {
+      running: '#22c55e',
+      idle: '#eab308'
+    }
+    return colors[status as keyof typeof colors] || '#9aa4b2'
+  }
+
+  const getStatusLabel = (status: string) => {
+    const labels = { running: '生產中', idle: '待機' }
+    return labels[status as keyof typeof labels] || status
+  }
+
+  const getDowntimesForHour = (machineId: number, hour: number) => {
+    return downtimeSlots.filter((slot) => slot.machineId === machineId && slot.startHour === hour)
+  }
+
+  const handleDrop = (machineId: number, hour: number) => {
+    if (!draggedOrder) return
+    
+    const duration = draggedOrder.endHour - draggedOrder.startHour
+    
+    // 檢查目標時段是否已有其他工單
+    const existingOrders = workOrders.filter(wo => 
+      wo.id !== draggedOrder.id && 
+      wo.machineId === machineId && 
+      wo.startHour < hour + duration && 
+      wo.endHour > hour
+    )
+    
+    let newStartHour = hour
+    
+    // 如果有衝突，將新工單排在最後一張卡片之後
+    if (existingOrders.length > 0) {
+      const maxEndHour = Math.max(...existingOrders.map(wo => wo.endHour))
+      newStartHour = maxEndHour
+    }
+    
+    const newEndHour = newStartHour + duration
+    
+    if (newEndHour > 20) return // 不能超過營運時間
+    
+    // 檢查是否與停機時段重疊
+    const hasDowntimeConflict = downtimeSlots.some(slot => 
+      slot.machineId === machineId &&
+      slot.startHour < newEndHour &&
+      slot.endHour > newStartHour
+    )
+    
+    if (hasDowntimeConflict) {
+      // 有停機時段衝突，取消拖放
+      setDraggedOrder(null)
+      setDragOverMachine(null)
+      setDragOverHour(null)
+      return
+    }
+    
+    setWorkOrders(prev => prev.map(wo => 
+      wo.id === draggedOrder.id 
+        ? { ...wo, machineId, startHour: newStartHour, endHour: newEndHour }
+        : wo
+    ))
+    
+    setDraggedOrder(null)
+    setDragOverMachine(null)
+    setDragOverHour(null)
+  }
+
+  const filteredOrders = workOrders.filter((wo) => {
+    if (filteredStatus === 'all') return true
+    return wo.status === filteredStatus
+  })
+
+  const getOrdersForHour = (machineId: number, hour: number) => {
+    // 只在工單開始時間的時段顯示該卡片
+    return filteredOrders.filter((wo) => wo.machineId === machineId && wo.startHour === hour)
+  }
+
+  const getOrderDuration = (order: WorkOrder) => {
+    return order.endHour - order.startHour
+  }
+
+  const timeToColumnStart = (hour: number) => {
+    const index = hour - 8
+    return index + 2 // 第 1 欄是「機台」標籤
+  }
+
+  return (
+    <div className="scheduling-page">
+      {/* Toolbar */}
+      <div className="scheduling-toolbar">
+        <div className="toolbar-section">
+          <label>日期
+            <input type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} />
+          </label>
+        </div>
+
+        <div className="toolbar-section">
+          <button
+            onClick={() => setViewMode('machine')}
+            className={viewMode === 'machine' ? 'active' : ''}
+          >
+            機台視角
+          </button>
+          <button
+            onClick={() => setViewMode('order')}
+            className={viewMode === 'order' ? 'active' : ''}
+          >
+            訂單視角
+          </button>
+        </div>
+
+        <div className="toolbar-section">
+          <label>縮放
+            <select value={zoomLevel} onChange={(e) => setZoomLevel(e.target.value as any)} style={{ marginLeft: '8px', padding: '6px', borderRadius: '6px', background: 'rgba(15,23,36,0.8)', border: '1px solid rgba(30,160,233,0.3)', color: 'var(--text)' }}>
+              <option value="hour">1小時</option>
+              <option value="30min">30分鐘</option>
+              <option value="15min">15分鐘</option>
+              <option value="5min">5分鐘</option>
+              <option value="1min">1分鐘</option>
+            </select>
+          </label>
+        </div>
+
+        <div className="toolbar-section">
+          <button className="primary-btn">AI 重新排程</button>
+          <button className="urgent-btn">插入急單並重排</button>
+        </div>
+      </div>
+
+      <div className="scheduling-content">
+        {/* Left sidebar: filters & legend */}
+        <aside className="scheduling-sidebar">
+          <div className="filter-section">
+            <h3>篩選</h3>
+            <div className="filter-options">
+              {['all', 'running', 'idle'].map((status) => (
+                <label key={status}>
+                  <input
+                    type="radio"
+                    name="status"
+                    value={status}
+                    checked={filteredStatus === status}
+                    onChange={(e) => setFilteredStatus(e.target.value as any)}
+                  />
+                  {status === 'all' ? '全部' : getStatusLabel(status)}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div className="legend-section">
+            <h3>狀態圖例</h3>
+            <div className="legend-items">
+              {['running', 'idle'].map((status) => (
+                <div key={status} className="legend-item">
+                  <div
+                    className="legend-color"
+                    style={{ backgroundColor: getStatusColor(status) }}
+                  />
+                  <span>{getStatusLabel(status)}</span>
+                </div>
+              ))}
+              <div className="legend-item">
+                <div
+                  className="legend-color"
+                  style={{ backgroundColor: '#ef4444' }}
+                />
+                <span>停機時段</span>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        {/* Main: scheduling board */}
+        <div className="scheduling-board">
+          <div className="schedule-grid" style={{ gridTemplateColumns: `120px repeat(${slotCount}, 1fr)` }}>
+            {/* 左上角「機台」標題 */}
+            <div className="machine-column-header" style={{ gridColumn: '1 / 2', gridRow: '1 / 2' }}>
+              機台
+            </div>
+
+            {/* 時間刻度 header (row 1) */}
+            {timeSlots.map((slot, index) => (
+              <div
+                key={slot.id}
+                className="shift-header"
+                style={{
+                  gridColumn: `${index + 2} / ${index + 3}`,
+                  gridRow: '1 / 2'
+                }}
+              >
+                <div className="shift-label">{slot.label}</div>
+              </div>
+            ))}
+
+            {/* 每個機台的行 */}
+            {machines.map((machineId, machineIndex) => {
+              const row = machineIndex + 2
+              return (
+                <React.Fragment key={machineId}>
+                  {/* 機台標籤 */}
+                  <div
+                    className="machine-label"
+                    style={{ gridColumn: '1 / 2', gridRow: `${row} / ${row + 1}` }}
+                  >
+                    機台 {machineId}
+                  </div>
+
+                  {/* 時間格子 (用於拖放目標) */}
+                  {timeSlots.map((slot, slotIndex) => {
+                    const slotHour = Math.floor(slot.minutes / 60)
+                    // 檢查此格是否在停機時段內
+                    const isInDowntime = downtimeSlots.some(dt => 
+                      dt.machineId === machineId &&
+                      dt.startHour * 60 <= slot.minutes &&
+                      dt.endHour * 60 > slot.minutes
+                    )
+                    
+                    return (
+                      <div
+                        key={`${machineId}-${slot.id}`}
+                        className={`shift-cell ${dragOverMachine === machineId && dragOverHour === slotHour ? (isInDowntime ? 'drag-blocked' : 'drag-over') : ''}`}
+                        style={{
+                          gridColumn: `${slotIndex + 2} / ${slotIndex + 3}`,
+                          gridRow: `${row} / ${row + 1}`
+                        }}
+                        onDragOver={(e) => {
+                          e.preventDefault()
+                          setDragOverMachine(machineId)
+                          setDragOverHour(slotHour)
+                        }}
+                        onDragLeave={() => {
+                          setDragOverMachine(null)
+                          setDragOverHour(null)
+                        }}
+                        onDrop={() => handleDrop(machineId, slotHour)}
+                      />
+                    )
+                  })}
+
+                  {/* 停機時段 */}
+                  {getDowntimesForHour(machineId, 8).concat(
+                    getDowntimesForHour(machineId, 9),
+                    getDowntimesForHour(machineId, 10),
+                    getDowntimesForHour(machineId, 11),
+                    getDowntimesForHour(machineId, 12),
+                    getDowntimesForHour(machineId, 13),
+                    getDowntimesForHour(machineId, 14),
+                    getDowntimesForHour(machineId, 15),
+                    getDowntimesForHour(machineId, 16),
+                    getDowntimesForHour(machineId, 17),
+                    getDowntimesForHour(machineId, 18),
+                    getDowntimesForHour(machineId, 19)
+                  ).map((downtime) => {
+                    const startCol = timeToColumnStart(downtime.startHour)
+                    const span = downtime.endHour - downtime.startHour
+                    return (
+                      <div
+                        key={downtime.id}
+                        className="downtime-slot"
+                        style={{
+                          gridColumn: `${startCol} / span ${span}`,
+                          gridRow: `${row} / ${row + 1}`
+                        }}
+                      >
+                        <span className="downtime-icon">⏸</span>
+                        <span className="downtime-text">停機</span>
+                        <div className="downtime-time">{String(downtime.startHour).padStart(2, '0')}:00 - {String(downtime.endHour).padStart(2, '0')}:00</div>
+                      </div>
+                    )
+                  })}
+
+                  {/* 工單卡片 */}
+                  {getOrdersForHour(machineId, 8).concat(
+                    getOrdersForHour(machineId, 9),
+                    getOrdersForHour(machineId, 10),
+                    getOrdersForHour(machineId, 11),
+                    getOrdersForHour(machineId, 12),
+                    getOrdersForHour(machineId, 13),
+                    getOrdersForHour(machineId, 14),
+                    getOrdersForHour(machineId, 15),
+                    getOrdersForHour(machineId, 16),
+                    getOrdersForHour(machineId, 17),
+                    getOrdersForHour(machineId, 18),
+                    getOrdersForHour(machineId, 19)
+                  ).map((order) => {
+                    const startCol = timeToColumnStart(order.startHour)
+                    const span = getOrderDuration(order)
+                    return (
+                      <div
+                        key={order.id}
+                        className="work-order-card"
+                        style={{
+                          gridColumn: `${startCol} / span ${span}`,
+                          gridRow: `${row} / ${row + 1}`,
+                          borderLeftColor: getStatusColor(order.status),
+                          opacity: draggedOrder?.id === order.id ? 0.5 : 1
+                        }}
+                      >
+                        <div className="wo-header">
+                          <div className="wo-header-left">
+                            <span 
+                              className="wo-drag-handle"
+                              draggable
+                              onDragStart={() => setDraggedOrder(order)}
+                              onDragEnd={() => {
+                                setDraggedOrder(null)
+                                setDragOverMachine(null)
+                                setDragOverHour(null)
+                              }}
+                            >
+                              ⋮⋮
+                            </span>
+                            <span className="wo-order-id">{order.orderId}</span>
+                          </div>
+                          <div className="wo-header-right">
+                            <span className="wo-status-badge" style={{ backgroundColor: getStatusColor(order.status) }}>
+                              {getStatusLabel(order.status)}
+                            </span>
+                            {order.aiLocked && <span className="wo-lock-icon">🔒</span>}
+                          </div>
+                        </div>
+                        <div className="wo-product">{order.productId}</div>
+                        <div className="wo-time">{String(order.startHour).padStart(2, '0')}:00 - {String(order.endHour).padStart(2, '0')}:00</div>
+                      </div>
+                    )
+                  })}
+                </React.Fragment>
+              )
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
