@@ -118,6 +118,16 @@ class MoldData(Base):
     yield_rank = Column(String, nullable=True)  # 良率排名
     created_at = Column(DateTime, default=datetime.utcnow)
 
+# 庫存資料表
+class Inventory(Base):
+    __tablename__ = "inventory"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    product_code = Column(String, nullable=False, unique=True)  # 品號 (唯一)
+    quantity = Column(Integer, nullable=False, default=0)  # 庫存數量
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
 # 元件生產排程
 class ComponentSchedule(Base):
     __tablename__ = "component_schedules"
