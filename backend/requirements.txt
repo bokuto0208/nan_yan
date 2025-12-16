@@ -3,3 +3,6 @@ uvicorn[standard]==0.27.0
 sqlalchemy==2.0.25
 python-dotenv==1.0.0
 pydantic==2.5.3
+openpyxl==3.1.2
+chardet==5.2.0
+python-multipart==0.0.6

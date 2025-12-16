@@ -60,6 +60,10 @@ export interface OrderWithComponents {
   id: string
   order_number: string
   customer_name: string
+  customer_id?: string
+  product_code: string
+  quantity: number
+  undelivered_quantity?: number
   due_date: string
   priority: number
   status: string

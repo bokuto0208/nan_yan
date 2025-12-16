@@ -23,7 +23,7 @@ class Order(Base):
     __tablename__ = "orders"
     
     id = Column(String, primary_key=True)
-    order_number = Column(String, unique=True, nullable=False)
+    order_number = Column(String, nullable=False)  # 移除 unique 限制，允許一個訂單號多個品號
     customer_name = Column(String, nullable=False)
     product_code = Column(String, nullable=False)
     quantity = Column(Integer, nullable=False)
@@ -33,6 +33,11 @@ class Order(Base):
     scheduled_date = Column(String, nullable=True)
     scheduled_start_time = Column(String, nullable=True)
     scheduled_end_time = Column(String, nullable=True)
+    # 新增欄位
+    order_date = Column(String, nullable=True)  # 接單日期
+    customer_id = Column(String, nullable=True)  # 客戶編號
+    order_sequence = Column(String, nullable=True)  # 訂單序
+    undelivered_quantity = Column(Integer, nullable=True)  # 未交數量
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

@@ -46,6 +46,21 @@ export const api = {
     if (!response.ok) throw new Error('Failed to delete order')
   },
 
+  async importOrdersExcel(file: File): Promise<{imported: number, updated: number, skipped: number}> {
+    const formData = new FormData()
+    formData.append('file', file)
+    
+    const response = await fetch(`${API_BASE_URL}/orders/import-excel`, {
+      method: 'POST',
+      body: formData
+    })
+    if (!response.ok) {
+      const error = await response.json()
+      throw new Error(error.detail || 'Failed to import Excel')
+    }
+    return response.json()
+  },
+
   // 停機時段相關 API
   async getDowntimes(date?: string): Promise<any[]> {
     const url = date ? `${API_BASE_URL}/downtimes?date=${date}` : `${API_BASE_URL}/downtimes`

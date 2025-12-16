@@ -1,10 +1,12 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import uvicorn
 import uuid
 import math
+import os
+import shutil
 from datetime import datetime
 
 from database import get_db, init_db, Order, Downtime, MachineProductHistory, Machine, Component, BOM, ComponentSchedule
@@ -232,6 +234,37 @@ def delete_order(order_id: str, db: Session = Depends(get_db)):
     db.delete(order)
     db.commit()
     return {"message": "Order deleted successfully"}
+
+@app.post("/api/orders/import-excel")
+async def import_orders_excel(file: UploadFile = File(...)):
+    """從 Excel 匯入訂單"""
+    from import_orders_excel import import_orders_from_excel
+    
+    # 檢查文件類型
+    if not file.filename.endswith(('.xlsx', '.xls')):
+        raise HTTPException(status_code=400, detail="只支援 Excel 文件 (.xlsx, .xls)")
+    
+    # 保存上傳的文件
+    temp_file = f"temp_{file.filename}"
+    try:
+        with open(temp_file, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        # 執行匯入
+        result = import_orders_from_excel(temp_file)
+        
+        return {
+            "message": "匯入成功",
+            "imported": result["imported"],
+            "updated": result["updated"],
+            "skipped": result["skipped"]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"匯入失敗: {str(e)}")
+    finally:
+        # 刪除臨時文件
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
 
 @app.post("/api/orders/bootstrap")
 def bootstrap_sample_data(db: Session = Depends(get_db)):
@@ -461,6 +494,10 @@ def get_orders_with_components(db: Session = Depends(get_db)):
             "id": order.id,
             "order_number": order.order_number,
             "customer_name": order.customer_name,
+            "customer_id": order.customer_id,
+            "product_code": order.product_code,
+            "quantity": order.quantity,
+            "undelivered_quantity": order.undelivered_quantity,
             "due_date": order.due_date,
             "priority": order.priority,
             "status": order.status,
