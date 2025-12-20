@@ -1,0 +1,316 @@
+/* Scheduling Page Styles */
+
+.mainWrapper {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.boardContainer {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  background: linear-gradient(135deg, rgba(15, 23, 36, 0.5), rgba(7, 16, 35, 0.3));
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  backdrop-filter: blur(10px);
+  overflow: hidden;
+}
+
+/* Machine Labels Column */
+.machineLabelsColumn {
+  width: 120px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: rgba(15, 23, 36, 0.98);
+  backdrop-filter: blur(8px);
+  border-right: 2px solid rgba(30, 160, 233, 0.3);
+  overflow: hidden;
+}
+
+.machineLabelsHeader {
+  height: 60px;
+  flex-shrink: 0;
+  background: linear-gradient(135deg, rgba(30, 160, 233, 0.2), rgba(124, 58, 237, 0.15));
+  border-bottom: 2px solid rgba(30, 160, 233, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  color: #1ea0e9;
+  font-size: 14px;
+  letter-spacing: 0.5px;
+  box-sizing: border-box;
+}
+
+.machineLabelsScroll {
+  flex: 1;
+  overflow-y: scroll;
+  overflow-x: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.machineLabelsScroll::-webkit-scrollbar {
+  display: none;
+}
+
+.machineLabel {
+  height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 4px;
+  font-weight: 600;
+  color: rgba(230, 238, 248, 0.95);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 13px;
+  box-sizing: border-box;
+}
+
+.machineLabel:nth-child(even) {
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.machineLabelId {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.machineLabelArea {
+  font-size: 10px;
+  opacity: 0.5;
+  font-weight: 400;
+}
+
+/* Timeline Area */
+.timelineScrollArea {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.timeAxisHeader {
+  height: 60px;
+  flex-shrink: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  background: linear-gradient(135deg, rgba(15, 23, 36, 0.98), rgba(7, 16, 35, 0.95));
+  backdrop-filter: blur(8px);
+  border-bottom: 2px solid rgba(30, 160, 233, 0.3);
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  box-sizing: border-box;
+}
+
+.timeAxisHeader::-webkit-scrollbar {
+  display: none;
+}
+
+.timeAxisContent {
+  height: 100%;
+  position: relative;
+}
+
+.gridLine {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 1;
+}
+
+.gridLineMajor {
+  width: 2px;
+  background: rgba(30, 160, 233, 0.4);
+}
+
+.gridLineMinor {
+  width: 1px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.timeLabel {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 12px;
+  font-weight: 600;
+  color: #1ea0e9;
+  z-index: 2;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+
+/* Timeline Rows */
+.timelineRowsScroll {
+  flex: 1;
+  overflow: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.timelineRowsScroll::-webkit-scrollbar {
+  display: none;
+}
+
+.schedulingBoardTimeline {
+  position: relative;
+}
+
+.fullGridLine {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.fullGridLineMajor {
+  width: 2px;
+  background: rgba(30, 160, 233, 0.15);
+}
+
+.fullGridLineMinor {
+  width: 1px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.timelineRow {
+  position: absolute;
+  left: 0;
+  height: 60px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.timelineRow:nth-child(even) {
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.rowContent {
+  position: relative;
+  height: 60px;
+  width: 100%;
+}
+
+/* Downtime Slot */
+.downtimeSlot {
+  position: absolute;
+  top: 4px;
+  height: 52px;
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.25), rgba(239, 68, 68, 0.15));
+  border: 2px solid rgba(239, 68, 68, 0.6);
+  border-radius: 6px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.downtimeIcon {
+  font-size: 14px;
+}
+
+.downtimeText {
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.downtimeTime {
+  font-size: 9px;
+  opacity: 0.7;
+}
+
+/* Order Card */
+.orderCard {
+  position: absolute;
+  top: 4px;
+  height: 52px;
+  border-radius: 6px;
+  cursor: move;
+  transition: all 0.2s ease;
+  border: 2px solid transparent;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 4px 6px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.95);
+  overflow: hidden;
+  z-index: 3;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.orderCard:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  z-index: 4;
+}
+
+.orderCardScheduled {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.85), rgba(5, 150, 105, 0.75));
+  border-color: rgba(16, 185, 129, 0.6);
+}
+
+.orderCardPending {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.85), rgba(37, 99, 235, 0.75));
+  border-color: rgba(59, 130, 246, 0.6);
+}
+
+.orderCardDragging {
+  opacity: 0.5;
+  cursor: grabbing;
+}
+
+.orderCardTop {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.orderCardBottom {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 10px;
+  opacity: 0.9;
+}
+
+/* Fullscreen Button */
+.fullscreenButton {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  padding: 8px 12px;
+  background: rgba(30, 160, 233, 0.15);
+  border: 1.5px solid rgba(30, 160, 233, 0.4);
+  border-radius: 8px;
+  color: #1ea0e9;
+  cursor: pointer;
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+  z-index: 10;
+}
+
+.fullscreenButton:hover {
+  background: rgba(30, 160, 233, 0.25);
+  border-color: #1ea0e9;
+}
+
+.fullscreenButtonText {
+  font-size: 12px;
+  font-weight: 600;
+}

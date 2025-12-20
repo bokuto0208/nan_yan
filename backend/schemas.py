@@ -162,3 +162,21 @@ class OrderDetailResponse(OrderResponse):
     
     class Config:
         from_attributes = True
+
+# 報完工 Schema
+class CompletionCreate(BaseModel):
+    completion_no: str
+    completion_date: str
+    stock_in_date: str
+    finished_item_no: str
+    completed_qty: int
+    machine_code: Optional[str] = None
+    mold_code: Optional[str] = None
+
+class CompletionResponse(CompletionCreate):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True

@@ -1,7 +1,8 @@
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from sqlalchemy.exc import IntegrityError
+from typing import List, Optional, Dict
 import uvicorn
 import uuid
 import math
@@ -9,7 +10,7 @@ import os
 import shutil
 from datetime import datetime
 
-from database import get_db, init_db, Order, Downtime, MachineProductHistory, Machine, Component, BOM, ComponentSchedule
+from database import get_db, init_db, Order, Downtime, MachineProductHistory, Machine, Component, BOM, ComponentSchedule, Completion
 from schemas import (
     OrderCreate, OrderUpdate, OrderResponse,
     DowntimeCreate, DowntimeResponse,
@@ -18,7 +19,8 @@ from schemas import (
     ComponentCreate, ComponentResponse,
     BOMCreate, BOMResponse,
     ComponentScheduleResponse,
-    OrderDetailResponse
+    OrderDetailResponse,
+    CompletionCreate, CompletionResponse
 )
 
 # 初始化 FastAPI 應用
@@ -34,8 +36,10 @@ app.add_middleware(
         "http://127.0.0.1:5173",
         "http://127.0.0.1:3000",
         "http://127.0.0.1:5174",
-        "http://localhost:51730",  # 從錯誤信息看到的端口
-        "http://127.0.0.1:51730"
+        "http://localhost:51730",
+        "http://127.0.0.1:51730",
+        "http://localhost:51731",
+        "http://127.0.0.1:51731"
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -345,6 +349,72 @@ def delete_downtime(downtime_id: str, db: Session = Depends(get_db)):
     db.delete(downtime)
     db.commit()
     return {"message": "Downtime deleted successfully"}
+
+# ==================== 報完工 API ====================
+
+@app.post("/api/completions", response_model=CompletionResponse)
+def create_completion(data: CompletionCreate, db: Session = Depends(get_db)):
+    """建立報完工記錄"""
+    # 檢查完工單號是否已存在（唯一）
+    existing = db.query(Completion).filter(
+        Completion.completion_no == data.completion_no
+    ).first()
+    
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"completion_no '{data.completion_no}' already exists"
+        )
+    
+    # 不存在才新增
+    new_row = Completion(**data.model_dump())
+    db.add(new_row)
+    db.commit()
+    db.refresh(new_row)
+    return new_row
+
+@app.post("/api/completions/batch")
+def create_completions_batch(
+    payloads: List[CompletionCreate],
+    db: Session = Depends(get_db)
+) -> Dict:
+    """批次建立報完工記錄"""
+    inserted = 0
+    skipped = 0
+    skipped_nos: List[str] = []
+    
+    for payload in payloads:
+        try:
+            # 檢查完工單號是否已存在
+            exists = db.query(Completion).filter(
+                Completion.completion_no == payload.completion_no
+            ).first()
+            if exists:
+                skipped += 1
+                skipped_nos.append(payload.completion_no)
+                continue
+            
+            row = Completion(**payload.model_dump())
+            db.add(row)
+            db.flush()  # 讓唯一值錯誤能在這裡被抓到
+            inserted += 1
+        
+        except IntegrityError:
+            db.rollback()
+            skipped += 1
+            skipped_nos.append(payload.completion_no)
+    
+    db.commit()
+    return {
+        "inserted": inserted,
+        "skipped": skipped,
+        "skipped_completion_nos": skipped_nos
+    }
+
+@app.get("/api/completions", response_model=List[CompletionResponse])
+def get_completions(db: Session = Depends(get_db)):
+    """取得所有報完工記錄"""
+    return db.query(Completion).all()
 
 # ==================== 機台產品歷史數據 API ====================
 

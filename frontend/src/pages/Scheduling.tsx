@@ -8,6 +8,7 @@ import {
   MergeStrategy,
   SchedulingConfig 
 } from '../utils/schedulingAlgorithms'
+import styles from './Scheduling.module.css'
 
 type WorkOrder = {
   id: string
@@ -47,13 +48,14 @@ export default function SchedulingPage() {
   const [dragState, setDragState] = useState<DragState | null>(null)
   const [snapLineX, setSnapLineX] = useState<number | null>(null)
   const [dragTooltip, setDragTooltip] = useState<{ x: number; y: number; start: string; end: string; duration: string } | null>(null)
+  const [isFullscreen, setIsFullscreen] = useState(false)
   
   // 機台和區域狀態
   const [machines, setMachines] = useState<{ machine_id: string; area: string }[]>([])
   const [areas, setAreas] = useState<string[]>([])
   const [selectedArea, setSelectedArea] = useState<string>('all')
   
-  const MACHINE_ROW_HEIGHT = 120
+  const MACHINE_ROW_HEIGHT = 60
   const MACHINE_LABEL_WIDTH = 120
   
   // Downtime slots state
@@ -71,6 +73,33 @@ export default function SchedulingPage() {
   const [showSchedulingConfig, setShowSchedulingConfig] = useState(false)
   const [schedulingStrategy, setSchedulingStrategy] = useState<SchedulingStrategy>('quality-first')
   const [mergeStrategy, setMergeStrategy] = useState<MergeStrategy>('merge-with-deadline')
+  
+  // Fullscreen toggle function for gantt chart only
+  const toggleFullscreen = async () => {
+    if (!scrollContainerRef.current) return
+    
+    try {
+      if (!document.fullscreenElement) {
+        await scrollContainerRef.current.requestFullscreen()
+        setIsFullscreen(true)
+      } else {
+        await document.exitFullscreen()
+        setIsFullscreen(false)
+      }
+    } catch (error) {
+      console.error('全螢幕切換失敗:', error)
+    }
+  }
+  
+  // Listen for fullscreen changes
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement)
+    }
+    
+    document.addEventListener('fullscreenchange', handleFullscreenChange)
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange)
+  }, [])
   
   // Load machines and areas on mount
   useEffect(() => {
@@ -609,7 +638,19 @@ export default function SchedulingPage() {
   return (
     <div className="scheduling-page">
       {/* Toolbar */}
-      <div className="scheduling-toolbar">
+      <div className="scheduling-toolbar" style={{ position: 'relative' }}>
+        {/* Fullscreen button */}
+        <button
+          onClick={toggleFullscreen}
+          className={styles.fullscreenButton}
+          title={isFullscreen ? '退出全螢幕 (ESC)' : '展開甘特圖'}
+        >
+          {isFullscreen ? '⛶' : '⛶'}
+          <span className={styles.fullscreenButtonText}>
+            {isFullscreen ? '縮小' : '展開'}
+          </span>
+        </button>
+        
         <div className="toolbar-section">
           <label>日期
             <input type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} />
@@ -808,331 +849,243 @@ export default function SchedulingPage() {
         </aside>
         
         {/* Main: scheduling board */}
-        <div className="scheduling-main-wrapper" style={{ position: 'relative', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
-          {/* Fixed machine labels column */}
-          <div style={{
-            position: 'absolute',
-            left: 0,
-            top: 0,
-            width: MACHINE_LABEL_WIDTH,
-            height: '100%',
-            zIndex: 20,
-            pointerEvents: 'none',
-            display: 'flex',
-            flexDirection: 'column'
-          }}>
-            {/* Header spacer */}
-            <div style={{ 
-              height: 40, 
-              background: 'rgba(15,23,36,0.95)',
-              backdropFilter: 'blur(8px)',
-              borderRight: '1px solid rgba(255,255,255,0.1)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontWeight: 600,
-              color: 'rgba(255,255,255,0.8)',
-              borderTopLeftRadius: '12px'
-            }}>
-              機台
-            </div>
-            {/* Machine labels */}
-            <div style={{ flex: 1, position: 'relative' }}>
-              {filteredMachines.map((machine, index) => (
-                <div
-                  key={machine.machine_id}
-                  style={{
-                    position: 'absolute',
-                    top: index * MACHINE_ROW_HEIGHT,
-                    left: 0,
-                    width: MACHINE_LABEL_WIDTH,
-                    height: MACHINE_ROW_HEIGHT,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontWeight: 600,
-                    color: 'rgba(255,255,255,0.9)',
-                    borderRight: '1px solid rgba(255,255,255,0.1)',
-                    borderBottom: '1px solid rgba(255,255,255,0.1)',
-                    background: 'rgba(15,23,36,0.95)',
-                    backdropFilter: 'blur(8px)',
-                    flexDirection: 'column',
-                    gap: 4
-                  }}
-                >
-                  <div style={{ fontSize: 14 }}>{machine.machine_id}</div>
-                  <div style={{ fontSize: 10, opacity: 0.6 }}>{machine.area}區</div>
+        <div className={styles.mainWrapper}>
+          <div className={styles.boardContainer} ref={scrollContainerRef}>
+            {/* Fixed machine labels column */}
+            <div className={styles.machineLabelsColumn}>
+              {/* Header */}
+              <div className={styles.machineLabelsHeader}>
+                機台編號
+              </div>
+              {/* Machine labels - scrollable */}
+              <div 
+                id="machine-labels-scroll"
+                className={styles.machineLabelsScroll}
+                onScroll={(e) => {
+                  const timelineScroll = document.getElementById('timeline-rows-scroll')
+                  if (timelineScroll) {
+                    timelineScroll.scrollTop = e.currentTarget.scrollTop
+                  }
+                }}
+              >
+                <div style={{ minHeight: filteredMachines.length * MACHINE_ROW_HEIGHT }}>
+                  {filteredMachines.map((machine, index) => (
+                    <div
+                      key={machine.machine_id}
+                      className={styles.machineLabel}
+                      style={{ height: MACHINE_ROW_HEIGHT }}
+                    >
+                      <div className={styles.machineLabelId}>{machine.machine_id}</div>
+                      <div className={styles.machineLabelArea}>{machine.area}區</div>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="scheduling-board-container" ref={scrollContainerRef} style={{ 
-            flex: 1,
-            minHeight: 0,
-            overflow: 'auto',
-            background: 'linear-gradient(135deg,rgba(15,23,36,0.5),rgba(7,16,35,0.3))',
-            border: '1px solid rgba(255,255,255,0.1)',
-            borderRadius: '12px',
-            backdropFilter: 'blur(10px)',
-            padding: '16px',
-            paddingLeft: MACHINE_LABEL_WIDTH + 16
-          }}>
-            <div className="scheduling-board-timeline" ref={timelineRef} style={{ width: timeline.totalWidth }}>
-              {/* Time axis */}
-              <div className="timeline-header" style={{ height: 40, position: 'relative' }}>
-              <div className="timeline-axis" style={{ position: 'relative', height: 40 }}>
-                {timeline.getTimeMarks().map((mark) => (
-                  <div
-                    key={`mark-${mark.time}`}
-                    className={`time-mark ${mark.type}`}
-                    style={{
-                      position: 'absolute',
-                      left: mark.x,
-                      height: mark.type === 'major' ? 40 : 20,
-                      borderLeft: `1px solid ${mark.type === 'major' ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)'}`,
-                      paddingLeft: 4,
-                      fontSize: mark.type === 'major' ? 12 : 10,
-                      color: mark.type === 'major' ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.4)'
-                    }}
-                  >
-                    {mark.label}
-                  </div>
-                ))}
               </div>
             </div>
             
-            {/* Machine rows */}
-            <div className="timeline-rows" style={{ position: 'relative', minHeight: filteredMachines.length * MACHINE_ROW_HEIGHT }}>
-              {filteredMachines.map((machine, index) => {
-                const y = index * MACHINE_ROW_HEIGHT
-                return (
-                  <div
-                    key={machine.machine_id}
-                    className="timeline-row"
-                    style={{
-                      position: 'absolute',
-                      top: y,
-                      left: 0,
-                      width: timeline.totalWidth,
-                      height: MACHINE_ROW_HEIGHT,
-                      borderBottom: '1px solid rgba(255,255,255,0.1)'
-                    }}
-                  >
-                    {/* Timeline background grid */}
-                    <div style={{ position: 'relative', height: MACHINE_ROW_HEIGHT }}>
-                      {timeline.getTimeMarks().filter(m => m.type === 'major').map((mark) => (
-                        <div
-                          key={`grid-${machine.machine_id}-${mark.time}`}
-                          style={{
-                            position: 'absolute',
-                            left: mark.x,
-                            top: 0,
-                            width: 1,
-                            height: MACHINE_ROW_HEIGHT,
-                            background: 'rgba(255,255,255,0.05)'
-                          }}
-                        />
-                      ))}
-                      
-                      {/* Downtime slots */}
-                      {downtimeSlots
-                        .filter(slot => slot.machineId === machine.machine_id)
-                        .map(slot => (
-                          <div
-                            key={slot.id}
-                            className="downtime-slot-abs"
-                            style={{
-                              position: 'absolute',
-                              left: timeline.timeToX(slot.startHour),
-                              width: timeline.durationToWidth(slot.endHour - slot.startHour),
-                              top: 0,
-                              height: '120px',
-                              maxHeight: '120px',
-                              background: 'linear-gradient(135deg, rgba(239,68,68,0.2), rgba(239,68,68,0.1))',
-                              border: '2px solid #ef4444',
-                              borderRadius: 8,
-                              boxSizing: 'border-box',
-                              display: 'flex',
-                              flexDirection: 'column',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              gap: 4,
-                              pointerEvents: 'none'
-                            }}
-                          >
-                            <span style={{ fontSize: 20 }}>⏸</span>
-                            <span style={{ fontSize: 12, fontWeight: 600 }}>停機</span>
-                            <span style={{ fontSize: 10, opacity: 0.8 }}>
-                              {formatTime(slot.startHour)} - {formatTime(slot.endHour)}
-                            </span>
-                          </div>
-                        ))}
-                      
-                      {/* Work order cards */}
-                      {filteredOrders
-                        .filter(order => order.machineId === machine.machine_id)
-                        .map(order => {
-                          const isDragging = dragState?.order.id === order.id
-                          const left = timeline.timeToX(order.startHour)
-                          const width = timeline.durationToWidth(order.endHour - order.startHour)
-                          
-                          return (
-                            <div
-                              key={order.id}
-                              className={`work-order-card-abs ${isCompactMode ? 'compact' : 'detailed'}`}
-                              style={{
-                                position: 'absolute',
-                                left,
-                                width,
-                                top: 0,
-                                height: '120px',
-                                maxHeight: '120px',
-                                background: 'linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.04))',
-                                border: '1px solid rgba(255,255,255,0.1)',
-                                borderLeft: `3px solid ${getStatusColor(order.status)}`,
-                                borderRadius: 8,
-                                padding: isCompactMode ? '6px 8px' : '10px',
-                                boxSizing: 'border-box',
-                                cursor: 'grab',
-                                transition: isDragging ? 'none' : 'all 0.2s ease',
-                                opacity: isDragging ? 0.7 : 1,
-                                zIndex: isDragging ? 1000 : 1,
-                                boxShadow: isDragging ? '0 8px 24px rgba(30,160,233,0.3)' : '0 4px 12px rgba(30,160,233,0.1)',
-                                display: 'flex',
-                                flexDirection: 'column',
-                                gap: isCompactMode ? 2 : 6,
-                                justifyContent: 'center'
-                              }}
-                              onMouseDown={(e) => handleCardMouseDown(e, order)}
-                            >
-                              {isCompactMode ? (
-                                // Compact mode: minimal info
-                                <>
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <span style={{ fontSize: 11, fontWeight: 600 }}>{order.orderId}</span>
-                                    {order.aiLocked && <span style={{ fontSize: 10 }}>🔒</span>}
-                                  </div>
-                                  <div style={{ fontSize: 9, opacity: 0.7 }}>
-                                    {formatTime(order.startHour)} - {formatTime(order.endHour)}
-                                  </div>
-                                </>
-                              ) : (
-                                // Detailed mode: full info
-                                <>
-                                  <div className="wo-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <span style={{ fontSize: 13, fontWeight: 600 }}>{order.orderId}</span>
-                                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                                      <span
-                                        style={{
-                                          fontSize: 10,
-                                          padding: '2px 6px',
-                                          borderRadius: 4,
-                                          background: getStatusColor(order.status),
-                                          color: '#000'
-                                        }}
-                                      >
-                                        {getStatusLabel(order.status)}
-                                      </span>
-                                      {order.aiLocked && <span style={{ fontSize: 14 }}>🔒</span>}
-                                    </div>
-                                  </div>
-                                  <div style={{ fontSize: 12, opacity: 0.8 }}>{order.productId}</div>
-                                  <div style={{ fontSize: 11, opacity: 0.6 }}>
-                                    {formatTime(order.startHour)} - {formatTime(order.endHour)}
-                                  </div>
-                                </>
-                              )}
-                            </div>
-                          )
-                        })}
+            {/* Scrollable timeline area */}
+            <div 
+              id="timeline-scroll"
+              className={styles.timelineScrollArea}
+            >
+              {/* Time axis header - fixed */}
+              <div className={styles.timeAxisHeader}>
+                <div className={styles.timeAxisContent} style={{ width: timeline.totalWidth }}>
+                  {/* Vertical grid lines */}
+                  {timeline.getTimeMarks().map((mark) => (
+                    <div
+                      key={`grid-line-${mark.time}`}
+                      className={`${styles.gridLine} ${mark.type === 'major' ? styles.gridLineMajor : styles.gridLineMinor}`}
+                      style={{ left: mark.x }}
+                    />
+                  ))}
+                  {/* Time labels */}
+                  {timeline.getTimeMarks().filter(m => m.type === 'major').map((mark) => (
+                    <div
+                      key={`mark-${mark.time}`}
+                      className={styles.timeLabel}
+                      style={{ left: mark.x + 6 }}
+                    >
+                      {mark.label}
                     </div>
-                  </div>
-                )
-              })}
+                  ))}
+                </div>
+              </div>
               
-              {/* Snap line during drag */}
-              {snapLineX !== null && (
-                <>
-                  <div
-                    className="snap-line"
-                    style={{
-                      position: 'absolute',
-                      left: snapLineX,
-                      top: 0,
-                      width: 3,
-                      height: filteredMachines.length * MACHINE_ROW_HEIGHT,
-                      background: 'linear-gradient(to bottom, #1ea0e9, #7c3aed)',
-                      boxShadow: '0 0 12px rgba(30,160,233,0.9), 0 0 24px rgba(124,58,237,0.5)',
-                      pointerEvents: 'none',
-                      zIndex: 999,
-                      opacity: 0.9
-                    }}
-                  />
-                  {/* Snap indicator dots at time marks */}
-                  {timeline.getTimeMarks()
-                    .filter(mark => mark.type === 'major')
-                    .map(mark => {
-                      const markX = mark.x + MACHINE_LABEL_WIDTH
-                      const distance = Math.abs(markX - snapLineX)
-                      if (distance < 5) {
-                        return (
-                          <div
-                            key={`snap-dot-${mark.time}`}
-                            style={{
-                              position: 'absolute',
-                              left: markX - 4,
-                              top: -8,
-                              width: 8,
-                              height: 8,
-                              borderRadius: '50%',
-                              background: '#22c55e',
-                              boxShadow: '0 0 8px rgba(34,197,94,0.8)',
-                              pointerEvents: 'none',
-                              zIndex: 1000,
-                              animation: 'pulse 0.5s ease-in-out infinite'
-                            }}
-                          />
-                        )
-                      }
-                      return null
-                    })}
-                </>
-              )}
+              {/* Timeline rows - scrollable both directions */}
+              <div
+                id="timeline-rows-scroll"
+                className={styles.timelineRowsScroll}
+                onScroll={(e) => {
+                  const machineLabels = document.getElementById('machine-labels-scroll')
+                  if (machineLabels) {
+                    machineLabels.scrollTop = e.currentTarget.scrollTop
+                  }
+                  // Sync horizontal scroll with header
+                  const header = e.currentTarget.previousElementSibling as HTMLElement
+                  if (header) {
+                    header.scrollLeft = e.currentTarget.scrollLeft
+                  }
+                }}
+                onWheel={(e) => {
+                  if (e.shiftKey) {
+                    e.preventDefault()
+                    const container = e.currentTarget
+                    container.scrollLeft += e.deltaY
+                    // Sync with header
+                    const header = container.previousElementSibling as HTMLElement
+                    if (header) {
+                      header.scrollLeft = container.scrollLeft
+                    }
+                  }
+                }}
+              >
+                <div className={styles.schedulingBoardTimeline} ref={timelineRef} style={{ 
+                  width: timeline.totalWidth,
+                  minHeight: filteredMachines.length * MACHINE_ROW_HEIGHT
+                }}>
+                  {/* Vertical grid lines for all rows */}
+                  {timeline.getTimeMarks().map((mark) => (
+                    <div
+                      key={`full-grid-${mark.time}`}
+                      className={`${styles.fullGridLine} ${mark.type === 'major' ? styles.fullGridLineMajor : styles.fullGridLineMinor}`}
+                      style={{ left: mark.x }}
+                    />
+                  ))}
+                  
+                  {filteredMachines.map((machine, index) => {
+                    const y = index * MACHINE_ROW_HEIGHT
+                    return (
+                      <div
+                        key={machine.machine_id}
+                        className={styles.timelineRow}
+                        style={{
+                          top: y,
+                          width: timeline.totalWidth
+                        }}
+                      >
+                        {/* Row content container */}
+                        <div className={styles.rowContent}>
+                          {/* Downtime slots */}
+                          {downtimeSlots
+                            .filter(slot => slot.machineId === machine.machine_id)
+                            .map(slot => (
+                              <div
+                                key={slot.id}
+                                className={styles.downtimeSlot}
+                                style={{
+                                  left: timeline.timeToX(slot.startHour),
+                                  width: timeline.durationToWidth(slot.endHour - slot.startHour)
+                                }}
+                              >
+                                <span className={styles.downtimeIcon}>⏸</span>
+                                <span className={styles.downtimeText}>停機</span>
+                                <span className={styles.downtimeTime}>
+                                  {formatTime(slot.startHour)} - {formatTime(slot.endHour)}
+                                </span>
+                              </div>
+                            ))}
+                          
+                          {/* Work order cards */}
+                          {filteredOrders
+                            .filter(order => order.machineId === machine.machine_id)
+                            .map(order => {
+                              const isDragging = dragState?.order.id === order.id
+                              const left = timeline.timeToX(order.startHour)
+                              const width = timeline.durationToWidth(order.endHour - order.startHour)
+                              
+                              return (
+                                <div
+                                  key={order.id}
+                                  style={{
+                                    position: 'absolute',
+                                    left,
+                                    width,
+                                    top: 4,
+                                    height: MACHINE_ROW_HEIGHT - 8,
+                                    background: `linear-gradient(135deg, ${getStatusColor(order.status)}22, ${getStatusColor(order.status)}11)`,
+                                    border: `2px solid ${getStatusColor(order.status)}`,
+                                    borderRadius: 6,
+                                    padding: '4px 8px',
+                                    boxSizing: 'border-box',
+                                    cursor: 'grab',
+                                    transition: isDragging ? 'none' : 'all 0.2s ease',
+                                    opacity: isDragging ? 0.7 : 1,
+                                    zIndex: isDragging ? 1000 : 10,
+                                    boxShadow: isDragging 
+                                      ? `0 8px 24px ${getStatusColor(order.status)}66` 
+                                      : `0 2px 8px ${getStatusColor(order.status)}33`,
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    justifyContent: 'center',
+                                    overflow: 'hidden'
+                                  }}
+                                  onMouseDown={(e) => handleCardMouseDown(e, order)}
+                                >
+                                  <div style={{ 
+                                    fontSize: 11, 
+                                    fontWeight: 700, 
+                                    color: getStatusColor(order.status),
+                                    whiteSpace: 'nowrap',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis'
+                                  }}>
+                                    {order.orderId}
+                                  </div>
+                                  <div style={{ 
+                                    fontSize: 9, 
+                                    color: 'rgba(230,238,248,0.7)',
+                                    whiteSpace: 'nowrap',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis'
+                                  }}>
+                                    {order.productId}
+                                  </div>
+                                </div>
+                              )
+                            })}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
             </div>
           </div>
+          {/* end of scheduling-main-wrapper */}
         </div>
+        {/* end of scheduling-content */}
       </div>
-        
-        {/* Drag tooltip */}
-        {dragTooltip && (
-          <div
-            className="drag-tooltip"
-            style={{
-              position: 'fixed',
-              left: dragTooltip.x + 15,
-              top: dragTooltip.y - 40,
-              background: 'rgba(15,23,36,0.95)',
-              border: '1px solid rgba(30,160,233,0.5)',
-              borderRadius: 8,
-              padding: '8px 12px',
-              fontSize: 12,
-              color: 'rgba(255,255,255,0.9)',
-              pointerEvents: 'none',
-              zIndex: 10000,
-              boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
-              whiteSpace: 'nowrap'
-            }}
-          >
-            <div>開始：{dragTooltip.start}</div>
-            <div>結束：{dragTooltip.end}</div>
-            <div>工時：{dragTooltip.duration}</div>
-          </div>
-        )}
-        
-        {/* Downtime form modal */}
-        {showDowntimeForm && (
-          <div
+
+      {/* Drag tooltip */}
+      {dragTooltip && (
+        <div
+          className="drag-tooltip"
+          style={{
+            position: 'fixed',
+            left: dragTooltip.x + 15,
+            top: dragTooltip.y - 40,
+            background: 'rgba(15,23,36,0.95)',
+            border: '1px solid rgba(30,160,233,0.5)',
+            borderRadius: 8,
+            padding: '8px 12px',
+            fontSize: 12,
+            color: 'rgba(255,255,255,0.9)',
+            pointerEvents: 'none',
+            zIndex: 10000,
+            boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+            whiteSpace: 'nowrap'
+          }}
+        >
+          <div>開始：{dragTooltip.start}</div>
+          <div>結束：{dragTooltip.end}</div>
+          <div>工時：{dragTooltip.duration}</div>
+        </div>
+      )}
+
+      {/* Downtime form modal */}
+      {showDowntimeForm && (
+        <div
             style={{
               position: 'fixed',
               top: 0,
@@ -1264,11 +1217,11 @@ export default function SchedulingPage() {
               </div>
             </div>
           </div>
-        )}
+      )}
         
-        {/* AI Scheduling Config Modal */}
-        {showSchedulingConfig && (
-          <div
+      {/* AI Scheduling Config Modal */}
+      {showSchedulingConfig && (
+        <div
             style={{
               position: 'fixed',
               top: 0,
@@ -1503,7 +1456,6 @@ export default function SchedulingPage() {
             </div>
           </div>
         )}
-      </div>
     </div>
   )
 }

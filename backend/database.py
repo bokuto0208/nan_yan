@@ -144,6 +144,21 @@ class ComponentSchedule(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+# 報完工資料表
+class Completion(Base):
+    __tablename__ = "completions"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    completion_no = Column(String, nullable=False, unique=True, index=True)  # 完工單號（唯一）
+    completion_date = Column(String, nullable=False)  # 完工日期
+    stock_in_date = Column(String, nullable=False)    # 入庫日期
+    finished_item_no = Column(String, nullable=False)  # 完工品號
+    completed_qty = Column(Integer, nullable=False)    # 完工數量
+    machine_code = Column(String, nullable=True)       # 機台代號
+    mold_code = Column(String, nullable=True)          # 模具代號
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
 # 創建所有表
 def init_db():
     Base.metadata.create_all(bind=engine)
