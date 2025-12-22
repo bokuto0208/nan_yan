@@ -4,7 +4,7 @@
 import openpyxl
 import uuid
 from datetime import datetime
-from database import SessionLocal, Order, Product, BOM, ComponentSchedule, init_db
+from database import SessionLocal, Order, Product, BOM, ComponentSchedule, Inventory, MoldCalculation, init_db
 import math
 
 def parse_date(value):
@@ -90,14 +90,20 @@ def import_orders_from_excel(file_path):
                 # 轉換數量
                 try:
                     quantity_int = int(float(quantity)) if quantity else 0
-                    undelivered_int = int(float(undelivered_qty)) if undelivered_qty else quantity_int
                 except (ValueError, TypeError):
                     quantity_int = 0
-                    undelivered_int = 0
                 
                 if quantity_int <= 0:
                     skipped_count += 1
                     continue
+                
+                # 計算未交數量：訂單數量 - 庫存數量
+                inventory_record = db.query(Inventory).filter(
+                    Inventory.product_code == product_code_str
+                ).first()
+                
+                inventory_qty = inventory_record.quantity if inventory_record else 0
+                undelivered_int = max(0, quantity_int - inventory_qty)  # 不能為負數
                 
                 # 檢查訂單+品號組合是否已存在
                 existing_order = db.query(Order).filter(
@@ -137,12 +143,14 @@ def import_orders_from_excel(file_path):
                     db.add(new_order)
                     db.flush()
                     
-                    # 創建產品記錄
+                    # 創建產品記錄（0階成品）
                     product = Product(
                         id=str(uuid.uuid4()),
                         order_id=order_id,
                         product_code=product_code_str,
-                        quantity=quantity_int
+                        quantity=quantity_int,
+                        undelivered_quantity=undelivered_int,
+                        product_type='finished'  # 0階成品
                     )
                     db.add(product)
                     db.flush()
@@ -152,15 +160,49 @@ def import_orders_from_excel(file_path):
                     
                     if bom_items:
                         for bom_item in bom_items:
-                            # 數量計算：產品數量 / 穴數（無條件進位）
-                            required_quantity = math.ceil(quantity_int / bom_item.cavity_count)
+                            # 數量計算：未交數量 / 穴數（無條件進位）
+                            required_quantity = math.ceil(undelivered_int / bom_item.cavity_count)
                             
+                            # 創建1階子件產品記錄
+                            component_product = Product(
+                                id=str(uuid.uuid4()),
+                                order_id=order_id,
+                                product_code=bom_item.component_code,
+                                quantity=required_quantity,
+                                undelivered_quantity=required_quantity,
+                                product_type='component'  # 1階子件
+                            )
+                            db.add(component_product)
+                            
+                            # 判斷初始狀態
+                            if bom_item.component_code.startswith('6'):
+                                initial_status = "模具"  # 6開頭是模具,不需排程
+                            elif required_quantity == 0:
+                                initial_status = "無法進行排程"  # 數量為0不排程
+                            else:
+                                # 檢查是否有完整的 mold_calculations 資料
+                                # 必須有機台、穴數>0、成型時間>0
+                                has_complete_mold_calc = db.query(MoldCalculation).filter(
+                                    MoldCalculation.component_code == bom_item.component_code,
+                                    MoldCalculation.machine_id.isnot(None),
+                                    MoldCalculation.cavity_count.isnot(None),
+                                    MoldCalculation.cavity_count > 0,
+                                    MoldCalculation.avg_molding_time_sec.isnot(None),
+                                    MoldCalculation.avg_molding_time_sec > 0
+                                ).first() is not None
+                                
+                                if has_complete_mold_calc:
+                                    initial_status = "未排程"  # 有完整資料可排程
+                                else:
+                                    initial_status = "無法進行排程"  # 沒有完整的模具計算資料
+                            
+                            # 創建元件排程記錄
                             component_schedule = ComponentSchedule(
                                 id=str(uuid.uuid4()),
                                 order_id=order_id,
                                 component_code=bom_item.component_code,
                                 quantity=required_quantity,
-                                status="PENDING"
+                                status=initial_status
                             )
                             db.add(component_schedule)
                     
@@ -189,11 +231,32 @@ def import_orders_from_excel(file_path):
         print(f"  跳過: {skipped_count} 筆")
         print("="*60)
         
+        # 自動觸發模具計算
+        calc_warnings = []
+        try:
+            print("\n正在計算模具需求...")
+            from mold_calc import calculate_and_save
+            import traceback
+            calc_result = calculate_and_save(silent=True, save_excel=False)
+            if calc_result.get('success'):
+                print(f"✓ 模具計算完成：{calc_result.get('count', 0)} 筆資料已更新")
+                calc_warnings = calc_result.get('warnings', [])
+                if calc_warnings:
+                    print("\n⚠️  警示訊息:")
+                    for warning in calc_warnings:
+                        print(f"  {warning}")
+            else:
+                print(f"⚠️  模具計算返回失敗: {calc_result}")
+        except Exception as e:
+            print(f"⚠️  模具計算失敗（不影響訂單匯入）: {e}")
+            traceback.print_exc()
+        
         return {
             "success": True,
             "imported": imported_count,
             "updated": updated_count,
-            "skipped": skipped_count
+            "skipped": skipped_count,
+            "warnings": calc_warnings
         }
         
     except Exception as e:

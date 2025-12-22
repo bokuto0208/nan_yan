@@ -10,10 +10,12 @@ class OrderStatus(str):
     COMPLETED = "COMPLETED"
     CANCELLED = "CANCELLED"
 
-# 產品項目
+# 產品項目（擴展版，支持0階和1階產品）
 class ProductItem(BaseModel):
     product_code: str
     quantity: int
+    undelivered_quantity: Optional[int] = None  # 未交數量
+    product_type: Optional[str] = None  # 'finished' 或 'component'
 
 # 訂單基礎模型
 class OrderBase(BaseModel):
@@ -62,7 +64,7 @@ class OrderResponse(OrderBase):
 
 # 停機時段基礎模型
 class DowntimeBase(BaseModel):
-    machine_id: int
+    machine_id: str
     start_hour: float
     end_hour: float
     date: str

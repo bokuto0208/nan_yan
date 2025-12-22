@@ -46,7 +46,7 @@ class Downtime(Base):
     __tablename__ = "downtimes"
     
     id = Column(String, primary_key=True)
-    machine_id = Column(Integer, nullable=False)
+    machine_id = Column(String, nullable=False)
     start_hour = Column(Float, nullable=False)
     end_hour = Column(Float, nullable=False)
     date = Column(String, nullable=False)  # YYYY-MM-DD
@@ -58,7 +58,7 @@ class MachineProductHistory(Base):
     __tablename__ = "machine_product_history"
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    machine_id = Column(Integer, nullable=False)
+    machine_id = Column(String, nullable=False)
     product_code = Column(String, nullable=False)
     total_produced = Column(Integer, default=0)
     average_yield_rate = Column(Float, default=0.0)  # 0-1
@@ -73,14 +73,16 @@ class Machine(Base):
     machine_id = Column(String, primary_key=True)
     area = Column(String, nullable=False)
 
-# 產品模型 (訂單中的產品)
+# 產品模型 (訂單中的產品，包含0階成品和1階子件)
 class Product(Base):
     __tablename__ = "products"
     
     id = Column(String, primary_key=True)
     order_id = Column(String, nullable=False)  # 關聯到訂單
-    product_code = Column(String, nullable=False)
-    quantity = Column(Integer, nullable=False)
+    product_code = Column(String, nullable=False)  # 品號（0開頭=成品，1開頭=子件）
+    quantity = Column(Integer, nullable=False)  # 訂單數量
+    undelivered_quantity = Column(Integer, nullable=True)  # 未交數量（需要生產的數量）
+    product_type = Column(String, nullable=True)  # 產品類型：'finished'=0階成品, 'component'=1階子件
     created_at = Column(DateTime, default=datetime.utcnow)
 
 # 元件模型 (最小構成單位)
@@ -144,6 +146,25 @@ class ComponentSchedule(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+# 每日排程區塊表 (儲存分段後的每日工作量)
+class DailyScheduleBlock(Base):
+    __tablename__ = "daily_schedule_blocks"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    order_id = Column(String, nullable=False)  # 製令號（關聯到 ComponentSchedule.id）
+    component_code = Column(String, nullable=False)  # 品號
+    machine_id = Column(String, nullable=False)  # 機台
+    scheduled_date = Column(String, nullable=False)  # 該段的日期 YYYY-MM-DD
+    start_time = Column(DateTime, nullable=False)  # 開始時間
+    end_time = Column(DateTime, nullable=False)  # 結束時間
+    sequence = Column(Integer, nullable=False)  # 第幾段 (1, 2, 3...)
+    total_sequences = Column(Integer, nullable=False)  # 總共幾段
+    previous_block_id = Column(Integer, nullable=True)  # 前一段的 ID
+    next_block_id = Column(Integer, nullable=True)  # 後一段的 ID
+    status = Column(String, default="PENDING")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
 # 報完工資料表
 class Completion(Base):
     __tablename__ = "completions"
@@ -158,6 +179,61 @@ class Completion(Base):
     mold_code = Column(String, nullable=True)          # 模具代號
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+# 0號產品對照表（成品）
+class ProductZero(Base):
+    __tablename__ = "product_zero"
+    
+    product_code = Column(String, primary_key=True)  # 品號（0開頭）
+    drying_time = Column(Integer, nullable=True)  # 烘乾時間（分鐘）
+    packaging_time = Column(Integer, nullable=True)  # 包裝時間（分鐘）
+
+# 1階產品資料對照表（半成品）
+class ProductOne(Base):
+    __tablename__ = "product_one"
+    
+    product_code = Column(String, primary_key=True)  # 品號（1開頭）
+    mold_change_time = Column(Integer, nullable=True)  # 換模時間（分鐘）
+
+# 模具計算參考資料表（供排程邏輯參考用，不直接用於排程卡片）
+class MoldCalculation(Base):
+    __tablename__ = "mold_calculations"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    product_code = Column(String, nullable=False)  # 品號
+    component_code = Column(String, nullable=True)  # 子件品號
+    order_total = Column(Integer, nullable=True)  # 訂單總量
+    inventory_total = Column(Integer, nullable=True)  # 庫存總量
+    needed_quantity = Column(Integer, nullable=True)  # 需生產量
+    mold_code = Column(String, nullable=True)  # 模具編號
+    machine_id = Column(String, nullable=True)  # 機台編號
+    cavity_count = Column(Float, nullable=True)  # 一模穴數
+    shot_count = Column(Integer, nullable=True)  # 模次
+    avg_molding_time_sec = Column(Float, nullable=True)  # 平均成型時間(秒)
+    mold_change_time_min = Column(Float, nullable=True)  # 換模時間(分)
+    total_time_sec = Column(Float, nullable=True)  # 總成型時間(秒)
+    total_time_with_change_min = Column(Float, nullable=True)  # 含換模總時間(分)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+# 工作日曆模型
+class WorkCalendarDay(Base):
+    __tablename__ = "work_calendar_day"
+    
+    work_date = Column(String, primary_key=True, nullable=False)    # 'YYYY-MM-DD'
+    work_hours = Column(Float, nullable=False)                      # 0, 16, 18, 20...
+    start_time = Column(String, nullable=False, default='08:00')    # 開始時間
+    note = Column(String, nullable=True)                            # 備註
+
+# 工作日曆基礎空檔（預先計算）
+class WorkCalendarGap(Base):
+    __tablename__ = "work_calendar_gaps"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    work_date = Column(String, nullable=False, index=True)          # 'YYYY-MM-DD'
+    gap_start = Column(DateTime, nullable=False, index=True)        # 空檔開始時間
+    gap_end = Column(DateTime, nullable=False)                      # 空檔結束時間
+    duration_hours = Column(Float, nullable=False)                  # 持續時間（小時）
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 # 創建所有表
 def init_db():
