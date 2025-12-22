@@ -1,8 +1,8 @@
 import { useState, useCallback, useMemo } from 'react'
 
 // Timeline constants
-const T0_HOUR = 0  // Start time: 00:00
-const T1_HOUR = 24 // End time: 24:00 (23:59)
+const T0_HOUR = 8  // Start time: 08:00
+const T1_HOUR = 32 // End time: next day 08:00 (24 hours from 08:00)
 const BASE_HOUR_WIDTH = 120 // Base width in pixels for 1 hour at zoom=1 (increased for better precision)
 
 export interface TimelineConfig {
@@ -69,43 +69,46 @@ export function useTimeline(): TimelineConfig {
     // Determine granularity based on zoom
     if (zoom <= 1.5) {
       // Overview: 1 hour intervals
-      for (let h = T0_HOUR; h <= T1_HOUR; h++) {
+      for (let h = T0_HOUR; h < T1_HOUR; h++) {
+        const displayHour = h % 24 // 將小時轉換為 0-23 範圍
         marks.push({
           time: h,
           x: timeToX(h),
-          label: `${String(h).padStart(2, '0')}:00`,
+          label: `${String(displayHour).padStart(2, '0')}:00`,
           type: 'major'
         })
       }
     } else if (zoom <= 3) {
       // Medium: 30 minute intervals
-      for (let h = T0_HOUR; h <= T1_HOUR; h++) {
+      for (let h = T0_HOUR; h < T1_HOUR; h++) {
+        const displayHour = h % 24
         marks.push({
           time: h,
           x: timeToX(h),
-          label: `${String(h).padStart(2, '0')}:00`,
+          label: `${String(displayHour).padStart(2, '0')}:00`,
           type: 'major'
         })
         if (h < T1_HOUR) {
           marks.push({
             time: h + 0.5,
             x: timeToX(h + 0.5),
-            label: `${String(h).padStart(2, '0')}:30`,
+            label: `${String(displayHour).padStart(2, '0')}:30`,
             type: 'minor'
           })
         }
       }
     } else {
       // Detail: 10 minute intervals (max precision)
-      for (let h = T0_HOUR; h <= T1_HOUR; h++) {
+      for (let h = T0_HOUR; h < T1_HOUR; h++) {
+        const displayHour = h % 24
         for (let m = 0; m < 60; m += 10) {
           const time = h + m / 60
-          if (time > T1_HOUR) break
+          if (time >= T1_HOUR) break
           
           marks.push({
             time,
             x: timeToX(time),
-            label: m === 0 ? `${String(h).padStart(2, '0')}:00` : `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`,
+            label: m === 0 ? `${String(displayHour).padStart(2, '0')}:00` : `${String(displayHour).padStart(2, '0')}:${String(m).padStart(2, '0')}`,
             type: m === 0 ? 'major' : 'minor'
           })
         }

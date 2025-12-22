@@ -10,14 +10,30 @@
 }
 
 .boardContainer {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
   background: linear-gradient(135deg, rgba(15, 23, 36, 0.5), rgba(7, 16, 35, 0.3));
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 12px;
-  backdrop-filter: blur(10px);
   overflow: hidden;
+  cursor: grab;
+}
+
+.boardContainer:active {
+  cursor: grabbing;
+}
+
+/* Fullscreen mode styles */
+.boardContainer:fullscreen {
+  border-radius: 0;
+  background: rgba(15, 23, 36, 0.98);
+  backdrop-filter: blur(10px);
+}
+
+.boardContainer:fullscreen .machineLabelsColumn {
+  background: rgba(15, 23, 36, 1);
 }
 
 /* Machine Labels Column */

@@ -1,0 +1,262 @@
+.work-calendar-container {
+  padding: 20px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.calendar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 30px;
+  padding-bottom: 20px;
+  border-bottom: 2px solid rgba(30, 160, 233, 0.3);
+}
+
+.calendar-header h1 {
+  margin: 0;
+  font-size: 28px;
+  color: #e6eef8;
+  font-weight: 700;
+}
+
+.calendar-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.month-navigator {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.month-navigator button {
+  padding: 10px 18px;
+  background: linear-gradient(135deg, #1ea0e9, #7c3aed);
+  color: white;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 12px rgba(30, 160, 233, 0.2);
+}
+
+.month-navigator button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(30, 160, 233, 0.3);
+}
+
+.month-navigator button:active {
+  transform: translateY(0);
+}
+
+.save-btn {
+  padding: 10px 24px;
+  background: linear-gradient(135deg, #22c55e, #16a34a);
+  color: white;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 12px rgba(34, 197, 94, 0.2);
+  white-space: nowrap;
+}
+
+.save-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(34, 197, 94, 0.3);
+}
+
+.save-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.save-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  background: linear-gradient(135deg, rgba(148, 163, 184, 0.3), rgba(100, 116, 139, 0.2));
+  box-shadow: none;
+}
+
+.current-month {
+  font-size: 20px;
+  font-weight: bold;
+  min-width: 150px;
+  text-align: center;
+  color: #e6eef8;
+}
+
+.loading {
+  text-align: center;
+  padding: 40px;
+  font-size: 18px;
+  color: rgba(230, 238, 248, 0.7);
+}
+
+.calendar-grid {
+  background: rgba(15, 23, 36, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  overflow: hidden;
+  backdrop-filter: blur(10px);
+}
+
+.calendar-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  background: linear-gradient(135deg, rgba(30, 160, 233, 0.2), rgba(124, 58, 237, 0.15));
+  border-bottom: 2px solid rgba(30, 160, 233, 0.3);
+}
+
+.weekday-header {
+  padding: 12px;
+  text-align: center;
+  font-weight: bold;
+  font-size: 16px;
+  color: #1ea0e9;
+  letter-spacing: 0.5px;
+}
+
+.calendar-days {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 1px;
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.calendar-day {
+  background: linear-gradient(135deg, rgba(26, 58, 94, 0.3), rgba(15, 40, 71, 0.5));
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 12px;
+  min-height: 100px;
+  display: flex;
+  flex-direction: column;
+  transition: all 0.2s ease;
+}
+
+.calendar-day:hover {
+  background: linear-gradient(135deg, rgba(30, 160, 233, 0.08), rgba(124, 58, 237, 0.05));
+  border-color: rgba(30, 160, 233, 0.25);
+}
+
+.calendar-day.empty {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.calendar-day.weekend {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.1), rgba(220, 38, 38, 0.05));
+  border-color: rgba(239, 68, 68, 0.2);
+}
+
+.calendar-day.weekend:hover {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.15), rgba(220, 38, 38, 0.08));
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.day-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.day-number {
+  font-size: 18px;
+  font-weight: bold;
+  color: #e6eef8;
+}
+
+.day-weekday {
+  font-size: 12px;
+  color: rgba(154, 164, 178, 0.8);
+}
+
+.calendar-day.weekend .day-number {
+  color: #ef4444;
+}
+
+.day-content {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: auto;
+}
+
+.hours-input {
+  width: 70px;
+  padding: 8px 10px;
+  font-size: 16px;
+  background: rgba(15, 23, 36, 0.8);
+  border: 1px solid rgba(30, 160, 233, 0.3);
+  border-radius: 8px;
+  text-align: center;
+  color: #ffffff;
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+.hours-input:focus {
+  outline: none;
+  border-color: #1ea0e9;
+  box-shadow: 0 0 0 3px rgba(30, 160, 233, 0.2);
+}
+
+.hours-label {
+  font-size: 13px;
+  color: rgba(230, 238, 248, 0.7);
+}
+
+/* 響應式設計 */
+@media (max-width: 1024px) {
+  .calendar-days {
+    font-size: 14px;
+  }
+
+  .calendar-day {
+    min-height: 80px;
+    padding: 8px;
+  }
+
+  .day-number {
+    font-size: 16px;
+  }
+
+  .hours-input {
+    width: 60px;
+    font-size: 14px;
+  }
+}
+
+@media (max-width: 768px) {
+  .calendar-header {
+    flex-direction: column;
+    gap: 15px;
+  }
+
+  .calendar-days {
+    font-size: 12px;
+  }
+
+  .calendar-day {
+    min-height: 70px;
+    padding: 6px;
+  }
+
+  .day-number {
+    font-size: 14px;
+  }
+
+  .hours-input {
+    width: 50px;
+    font-size: 12px;
+  }
+}

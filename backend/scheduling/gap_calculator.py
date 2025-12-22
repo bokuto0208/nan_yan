@@ -62,7 +62,9 @@ class GapCalculator:
     def _ensure_work_start_time(self, time: datetime) -> datetime:
         """確保時間不早於當天的工作開始時間(8:00)"""
         work_start_hour = 8
-        day_start = time.replace(hour=work_start_hour, minute=0, second=0, microsecond=0)
+        # 獲取該時間所在日期的8:00
+        day_start = datetime(time.year, time.month, time.day, work_start_hour, 0, 0)
+        # 如果時間早於8:00，則調整到8:00
         if time < day_start:
             return day_start
         return time
@@ -113,14 +115,16 @@ class GapCalculator:
                                 for wi in work_intervals)
             
             if total_duration >= min_gap_hours and work_intervals:
+                # 確保開始時間不早於當天8:00
+                gap_start = self._ensure_work_start_time(work_intervals[0].start_time)
                 # 返回從第一個工作區間開始到最後一個工作區間結束的連續空檔
                 gaps.append(TimeGap(
                     machine_id=machine_id,
-                    start_time=work_intervals[0].start_time,
+                    start_time=gap_start,
                     end_time=work_intervals[-1].end_time,
                     duration_hours=total_duration,
                     is_work_time=True,
-                    has_downtime=self._has_downtime(machine_id, work_intervals[0].start_time, work_intervals[-1].end_time)
+                    has_downtime=self._has_downtime(machine_id, gap_start, work_intervals[-1].end_time)
                 ))
         else:
             # 有現有排程，計算排程區塊之間的空檔

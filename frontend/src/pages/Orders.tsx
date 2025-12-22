@@ -65,10 +65,27 @@ export default function OrdersPage() {
     load()
   }
 
-  async function handleDelete(id: string) {
-    if (!confirm('確定要刪除此訂單嗎？')) return
-    await api.deleteOrder(id)
+  async function handleDelete(orderNumber: string) {
+    if (!confirm(`確定要刪除訂單 ${orderNumber} 嗎？此操作將刪除該訂單號的所有記錄。`)) return
+    await api.deleteOrder(orderNumber)
     load()
+  }
+
+  async function handleDeleteAll() {
+    if (!confirm('⚠️ 確定要刪除所有訂單嗎？\n\n此操作將刪除:\n- 所有訂單\n- 所有元件排程\n- 所有排程區塊\n- 所有產品記錄\n\n此操作無法復原！')) return
+    
+    if (!confirm('再次確認：真的要刪除所有訂單嗎？')) return
+    
+    try {
+      setLoading(true)
+      const result = await api.deleteAllOrders()
+      alert(`刪除成功！\n\n訂單: ${result.deleted.orders} 筆\n元件排程: ${result.deleted.component_schedules} 筆\n排程區塊: ${result.deleted.schedule_blocks} 筆\n產品記錄: ${result.deleted.products} 筆`)
+      load()
+    } catch (error: any) {
+      alert(`刪除失敗: ${error.message}`)
+    } finally {
+      setLoading(false)
+    }
   }
 
   async function handleImportExcel(event: React.ChangeEvent<HTMLInputElement>) {
@@ -78,7 +95,13 @@ export default function OrdersPage() {
     try {
       setLoading(true)
       const result = await api.importOrdersExcel(file)
-      alert(`匯入完成！\n新增: ${result.imported} 筆\n更新: ${result.updated} 筆\n跳過: ${result.skipped} 筆`)
+      let message = `匯入完成！\n新增: ${result.imported} 筆\n更新: ${result.updated} 筆\n跳過: ${result.skipped} 筆`
+      
+      if (result.warnings && result.warnings.length > 0) {
+        message += '\n\n⚠️ 警示訊息:\n' + result.warnings.join('\n')
+      }
+      
+      alert(message)
       load()
     } catch (error: any) {
       alert(`匯入失敗: ${error.message}`)
@@ -103,6 +126,12 @@ export default function OrdersPage() {
           <button onClick={() => { setShowForm(!showForm); setEditing(null) }}>{showForm ? '關閉' : '新增訂單'}</button>
           <button style={{ marginLeft: 8 }} onClick={() => document.getElementById('excel-upload')?.click()}>
             匯入 Excel
+          </button>
+          <button 
+            style={{ marginLeft: 8, backgroundColor: '#dc3545', color: 'white' }} 
+            onClick={handleDeleteAll}
+          >
+            🗑️ 刪除所有訂單
           </button>
           <input
             id="excel-upload"
@@ -150,7 +179,7 @@ export default function OrdersPage() {
                 </div>
                 <div className="order-actions" onClick={(e) => e.stopPropagation()}>
                   <button onClick={() => { setEditing(group.firstOrder as any); setShowForm(false) }}>編輯</button>
-                  <button onClick={() => handleDelete(group.firstOrder.id)} style={{ marginLeft: 6 }}>刪除</button>
+                  <button onClick={() => handleDelete(group.orderNumber)} style={{ marginLeft: 6 }}>刪除</button>
                 </div>
               </div>
               
@@ -164,6 +193,9 @@ export default function OrdersPage() {
                             <span className="product-label">品號：</span>
                             <span className="product-code">{order.product_code}</span>
                             <span className="product-quantity">訂單數量：{order.quantity}</span>
+                            {order.inventory_quantity !== undefined && order.inventory_quantity !== null && (
+                              <span className="product-inventory" style={{ color: '#3b82f6' }}>庫存：{order.inventory_quantity}</span>
+                            )}
                             {order.undelivered_quantity !== undefined && order.undelivered_quantity !== null && (
                               <span className="product-undelivered">未交數量：{order.undelivered_quantity}</span>
                             )}
@@ -172,11 +204,23 @@ export default function OrdersPage() {
                         
                         {order.products && order.products.length > 0 ? (
                           <div className="components-list">
+                            {order.warning && (
+                              <div style={{ 
+                                padding: '8px 12px', 
+                                backgroundColor: '#fff3cd', 
+                                border: '1px solid #ffc107',
+                                borderRadius: '4px',
+                                marginBottom: '12px',
+                                color: '#856404'
+                              }}>
+                                ⚠️ 品號 {order.product_code} 有排程資料上的缺失! (原因: {order.warning})
+                              </div>
+                            )}
                             <table className="components-table">
                               <thead>
                                 <tr>
                                   <th>子件代碼</th>
-                                  <th>子件數量</th>
+                                  <th>子件數量/生產回次</th>
                                   <th>穴數</th>
                                   <th>狀態</th>
                                 </tr>

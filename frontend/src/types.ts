@@ -31,6 +31,8 @@ export interface BOM {
   created_at: string
 }
 
+export type ComponentStatus = '已排程' | '未排程' | '無法進行排程' | '模具'
+
 export interface ComponentSchedule {
   id: string
   order_id: string
@@ -40,7 +42,7 @@ export interface ComponentSchedule {
   scheduled_start_time?: string
   scheduled_end_time?: string
   machine_id?: string
-  status: string
+  status: ComponentStatus
   created_at: string
   updated_at: string
 }

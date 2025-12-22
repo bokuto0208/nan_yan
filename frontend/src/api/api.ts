@@ -39,14 +39,25 @@ export const api = {
     return response.json()
   },
 
-  async deleteOrder(id: string): Promise<void> {
-    const response = await fetch(`${API_BASE_URL}/orders/${id}`, {
+  async deleteOrder(orderNumber: string): Promise<void> {
+    const response = await fetch(`${API_BASE_URL}/orders/${orderNumber}`, {
       method: 'DELETE'
     })
     if (!response.ok) throw new Error('Failed to delete order')
   },
 
-  async importOrdersExcel(file: File): Promise<{imported: number, updated: number, skipped: number}> {
+  async deleteAllOrders(): Promise<{message: string, deleted: {orders: number, component_schedules: number, schedule_blocks: number, products: number}}> {
+    const response = await fetch(`${API_BASE_URL}/orders/all/delete`, {
+      method: 'DELETE'
+    })
+    if (!response.ok) {
+      const error = await response.json()
+      throw new Error(error.detail || 'Failed to delete all orders')
+    }
+    return response.json()
+  },
+
+  async importOrdersExcel(file: File): Promise<{imported: number, updated: number, skipped: number, warnings?: string[]}> {
     const formData = new FormData()
     formData.append('file', file)
     
@@ -192,5 +203,158 @@ export const api = {
       method: 'POST'
     })
     if (!response.ok) throw new Error('Failed to expand order components')
+  },
+
+  // 工作日曆相關 API
+  async getWorkCalendar(year?: number, month?: number): Promise<any[]> {
+    let url = `${API_BASE_URL}/work-calendar`
+    if (year && month) {
+      url += `?year=${year}&month=${month}`
+    }
+    const response = await fetch(url)
+    if (!response.ok) throw new Error('Failed to fetch work calendar')
+    return response.json()
+  },
+
+  async upsertWorkCalendarDay(data: {
+    work_date: string
+    work_hours: number
+    start_time: string
+    note?: string
+  }): Promise<void> {
+    const response = await fetch(`${API_BASE_URL}/work-calendar`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    })
+    if (!response.ok) throw new Error('Failed to save work calendar day')
+  },
+
+  async batchUpsertWorkCalendar(data: {
+    days: Array<{
+      work_date: string
+      work_hours: number
+      start_time: string
+      note?: string
+    }>
+  }): Promise<void> {
+    const response = await fetch(`${API_BASE_URL}/work-calendar/batch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    })
+    if (!response.ok) throw new Error('Failed to batch save work calendar')
+  },
+
+  // 排程相關 API
+  async runScheduling(config: {
+    order_ids?: string[]
+    merge_enabled?: boolean
+    merge_window_weeks?: number
+    time_threshold_pct?: number
+    reschedule_all?: boolean
+  }): Promise<{
+    success: boolean
+    message: string
+    blocks: Array<{
+      block_id: string
+      machine_id: string
+      mold_code: string
+      start_time: string
+      end_time: string
+      mo_ids: string[]
+      component_codes: string[]
+      product_display: string
+      status: string
+      is_merged: boolean
+    }>
+    scheduled_mos: string[]
+    failed_mos: string[]
+    total_mos: number
+    on_time_count: number
+    late_count: number
+    total_lateness_days: number
+    changeover_count: number
+    delay_reports: any[]
+    change_log: any[]
+    execution_time_seconds: number
+  }> {
+    const response = await fetch(`${API_BASE_URL}/scheduling/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config)
+    })
+    if (!response.ok) {
+      const error = await response.json()
+      throw new Error(error.detail || 'Failed to run scheduling')
+    }
+    return response.json()
+  },
+
+  async getSchedulingStatus(): Promise<{
+    pending_orders: number
+    scheduled_orders: number
+    last_schedule_time: string | null
+  }> {
+    const response = await fetch(`${API_BASE_URL}/scheduling/status`)
+    if (!response.ok) throw new Error('Failed to get scheduling status')
+    return response.json()
+  },
+
+  async getScheduledComponents(date?: string, machineId?: string): Promise<{
+    schedules: Array<{
+      id: string
+      orderId: string
+      productId: string
+      machineId: string
+      startHour: number
+      endHour: number
+      scheduledDate: string
+      status: string
+      aiLocked: boolean
+      isSplit?: boolean
+      splitPart?: number
+      totalSplits?: number
+    }>
+  }> {
+    const params = new URLSearchParams()
+    if (date) params.append('date', date)
+    if (machineId) params.append('machine_id', machineId)
+    
+    const url = `${API_BASE_URL}/scheduling/schedules${params.toString() ? '?' + params.toString() : ''}`
+    const response = await fetch(url)
+    if (!response.ok) throw new Error('Failed to get scheduled components')
+    return response.json()
+  },
+
+  async updateScheduledComponents(
+    updates: Array<{
+      id: string
+      orderId: string
+      productId: string
+      startHour: number
+      endHour: number
+      machineId: string
+      scheduledDate: string
+      status?: string
+      aiLocked?: boolean
+      isModified?: boolean
+    }>,
+    deletedIds: string[] = []
+  ): Promise<{
+    success: boolean
+    updated_count: number
+    errors: string[]
+  }> {
+    const response = await fetch(`${API_BASE_URL}/scheduling/schedules/batch`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ updates, deletedIds })
+    })
+    if (!response.ok) {
+      const error = await response.json()
+      throw new Error(error.detail || 'Failed to update schedules')
+    }
+    return response.json()
   }
 }

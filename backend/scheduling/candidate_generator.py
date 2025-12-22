@@ -206,6 +206,12 @@ class CandidateGenerator:
         Returns:
             ScheduleCandidate 或 None
         """
+        # 0. 確保開始時間不早於當天8:00
+        work_start_hour = 8
+        day_start = datetime(start_time.year, start_time.month, start_time.day, work_start_hour, 0, 0)
+        if start_time < day_start:
+            start_time = day_start
+        
         # 1. 計算結束時間
         end_time, forming_hours, total_hours = self.time_estimator.calculate_end_time(
             start_time, mo, mold_info, include_changeover=True

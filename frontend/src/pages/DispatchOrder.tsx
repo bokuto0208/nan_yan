@@ -272,6 +272,39 @@ export default function DispatchOrderPage() {
     })();
   }, []);
 
+  // ====== 一鍵刪除所有報完工資料 ======
+  async function handleDeleteAll() {
+    if (!window.confirm("⚠️ 確定要刪除所有報完工資料嗎？\n這個操作無法復原！")) {
+      return;
+    }
+
+    setError("");
+    setBatchResult(null);
+    setLoading(true);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/completions/all`, {
+        method: 'DELETE'
+      });
+      
+      if (!response.ok) {
+        throw new Error("刪除失敗");
+      }
+
+      const result = await response.json();
+      
+      // 重新載入資料
+      const data = await apiGetCompletions();
+      setDbRows(data);
+      
+      alert(`✅ 已刪除 ${result.deleted_count} 筆報完工資料`);
+    } catch (e: any) {
+      setError(e?.message ?? "刪除失敗");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   // ====== 手動輸入：欄位變更 ======
   function handleManualChange<K extends keyof CompletionCreate>(
     key: K,
@@ -950,18 +983,59 @@ export default function DispatchOrderPage() {
       </div>
 
       <div style={{ marginTop: 24 }}>
-        <h3 style={{ 
-          marginBottom: 12,
-          fontSize: 16,
-          fontWeight: 700,
-          color: 'rgba(230, 238, 248, 0.9)',
+        <div style={{
           display: 'flex',
           alignItems: 'center',
-          gap: 8
+          justifyContent: 'space-between',
+          marginBottom: 12
         }}>
-          <span style={{ fontSize: 18 }}>💾</span>
-          資料庫現有報完工資料
-        </h3>
+          <h3 style={{ 
+            fontSize: 16,
+            fontWeight: 700,
+            color: 'rgba(230, 238, 248, 0.9)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            margin: 0
+          }}>
+            <span style={{ fontSize: 18 }}>💾</span>
+            資料庫現有報完工資料
+          </h3>
+          
+          {dbRows.length > 0 && (
+            <button
+              onClick={handleDeleteAll}
+              disabled={loading}
+              style={{
+                padding: '8px 16px',
+                borderRadius: 8,
+                border: 'none',
+                background: loading ? 'linear-gradient(135deg, #6b7280, #4b5563)' : 'linear-gradient(135deg, #ef4444, #dc2626)',
+                color: 'white',
+                cursor: loading ? 'not-allowed' : 'pointer',
+                fontSize: 12,
+                fontWeight: 700,
+                transition: 'all 0.3s ease',
+                boxShadow: loading ? 'none' : '0 4px 12px rgba(239, 68, 68, 0.3)',
+                opacity: loading ? 0.6 : 1
+              }}
+              onMouseEnter={(e) => {
+                if (!loading) {
+                  e.currentTarget.style.transform = 'translateY(-2px)';
+                  e.currentTarget.style.boxShadow = '0 6px 16px rgba(239, 68, 68, 0.4)';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (!loading) {
+                  e.currentTarget.style.transform = 'translateY(0)';
+                  e.currentTarget.style.boxShadow = '0 4px 12px rgba(239, 68, 68, 0.3)';
+                }
+              }}
+            >
+              🗑️ 一鍵刪除所有資料
+            </button>
+          )}
+        </div>
         <SimpleTable rows={dbRows} />
       </div>
     </div>
