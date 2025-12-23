@@ -10,6 +10,7 @@ export default function OrdersPage() {
   const [editing, setEditing] = useState<Order | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set())
+  const [searchTerm, setSearchTerm] = useState('')
 
   async function load() {
     setLoading(true)
@@ -44,6 +45,38 @@ export default function OrdersPage() {
         newSet.add(orderNumber)
       }
       return newSet
+    })
+  }
+
+  // 搜尋過濾函數
+  function filterOrders(groups: ReturnType<typeof groupOrdersByNumber>) {
+    if (!searchTerm.trim()) return groups
+    
+    const term = searchTerm.toLowerCase()
+    return groups.filter(group => {
+      // 搜尋訂單號
+      if (group.orderNumber.toLowerCase().includes(term)) return true
+      
+      // 搜尋客戶名稱
+      if (group.firstOrder.customer_name?.toLowerCase().includes(term)) return true
+      
+      // 搜尋品號
+      const hasMatchingProduct = group.orders.some(order => 
+        order.product_code.toLowerCase().includes(term)
+      )
+      if (hasMatchingProduct) return true
+      
+      // 搜尋子件代碼
+      const hasMatchingComponent = group.orders.some(order =>
+        order.products?.some((product: any) =>
+          product.components?.some((comp: any) =>
+            comp.component_code.toLowerCase().includes(term)
+          )
+        )
+      )
+      if (hasMatchingComponent) return true
+      
+      return false
     })
   }
 
@@ -122,7 +155,40 @@ export default function OrdersPage() {
     <div className="page">
       <div className="page-header">
         <h2>訂單管理</h2>
-        <div>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          {/* 搜尋框 */}
+          <input
+            type="text"
+            placeholder="🔍 搜尋訂單號、客戶、品號、子件..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            style={{
+              padding: '8px 12px',
+              borderRadius: '6px',
+              border: '1px solid rgba(255,255,255,0.2)',
+              background: 'rgba(255,255,255,0.05)',
+              color: '#fff',
+              fontSize: '14px',
+              width: '280px',
+              outline: 'none'
+            }}
+          />
+          {searchTerm && (
+            <button 
+              onClick={() => setSearchTerm('')}
+              style={{ 
+                padding: '8px 12px',
+                fontSize: '14px',
+                background: 'rgba(255,255,255,0.1)',
+                border: '1px solid rgba(255,255,255,0.2)',
+                borderRadius: '6px',
+                color: '#fff',
+                cursor: 'pointer'
+              }}
+            >
+              清除
+            </button>
+          )}
           <button onClick={() => { setShowForm(!showForm); setEditing(null) }}>{showForm ? '關閉' : '新增訂單'}</button>
           <button style={{ marginLeft: 8 }} onClick={() => document.getElementById('excel-upload')?.click()}>
             匯入 Excel
@@ -164,8 +230,53 @@ export default function OrdersPage() {
 
       {loading ? <p>載入中...</p> : (
         <div className="orders-container">
-          {groupOrdersByNumber(orders).map((group) => (
-            <div key={group.orderNumber} className="order-card">
+          {(() => {
+            const groupedOrders = groupOrdersByNumber(orders)
+            const filteredOrders = filterOrders(groupedOrders)
+            
+            // 顯示搜尋結果統計
+            if (searchTerm && filteredOrders.length !== groupedOrders.length) {
+              return (
+                <>
+                  <div style={{
+                    padding: '12px 16px',
+                    background: 'rgba(30, 160, 233, 0.1)',
+                    border: '1px solid rgba(30, 160, 233, 0.3)',
+                    borderRadius: '8px',
+                    marginBottom: '16px',
+                    color: '#1ea0e9',
+                    fontSize: '14px'
+                  }}>
+                    🔍 找到 <strong>{filteredOrders.length}</strong> 筆符合「{searchTerm}」的訂單
+                    （共 {groupedOrders.length} 筆訂單）
+                  </div>
+                  {filteredOrders.length === 0 ? (
+                    <div style={{
+                      padding: '40px',
+                      textAlign: 'center',
+                      color: 'rgba(255,255,255,0.5)',
+                      fontSize: '14px'
+                    }}>
+                      😕 沒有找到符合的訂單
+                    </div>
+                  ) : (
+                    filteredOrders.map((group) => renderOrderCard(group))
+                  )}
+                </>
+              )
+            }
+            
+            return filteredOrders.map((group) => renderOrderCard(group))
+          })()}
+        </div>
+      )}
+    </div>
+  )
+  
+  // 渲染訂單卡片的函數
+  function renderOrderCard(group: ReturnType<typeof groupOrdersByNumber>[0]) {
+    return (
+      <div key={group.orderNumber} className="order-card">
               <div className="order-header" onClick={() => toggleOrderExpanded(group.orderNumber)}>
                 <div className="order-info">
                   <span className="order-expand-icon">
@@ -254,9 +365,6 @@ export default function OrdersPage() {
                 </div>
               )}
             </div>
-          ))}
-        </div>
-      )}
-    </div>
-  )
+    )
+  }
 }

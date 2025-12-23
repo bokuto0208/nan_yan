@@ -1659,46 +1659,6 @@ export default function SchedulingPage() {
             </div>
           </div>
           
-          <div className="filter-section" style={{ marginTop: 20 }}>
-            <h3>狀態篩選</h3>
-            <div className="filter-options">
-              {['all', 'running', 'idle'].map((status) => (
-                <label key={status}>
-                  <input
-                    type="radio"
-                    name="status"
-                    value={status}
-                    checked={filteredStatus === status}
-                    onChange={(e) => setFilteredStatus(e.target.value as any)}
-                  />
-                  {status === 'all' ? '全部' : getStatusLabel(status)}
-                </label>
-              ))}
-            </div>
-          </div>
-          
-          <div className="legend-section">
-            <h3>狀態圖例</h3>
-            <div className="legend-items">
-              {['running', 'idle'].map((status) => (
-                <div key={status} className="legend-item">
-                  <div
-                    className="legend-color"
-                    style={{ backgroundColor: getStatusColor(status) }}
-                  />
-                  <span>{getStatusLabel(status)}</span>
-                </div>
-              ))}
-              <div className="legend-item">
-                <div
-                  className="legend-color"
-                  style={{ backgroundColor: '#ef4444' }}
-                />
-                <span>停機時段</span>
-              </div>
-            </div>
-          </div>
-          
           <div className="downtime-list-section" style={{ marginTop: 24 }}>
             <h3>停機時段列表</h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 }}>

@@ -25,10 +25,6 @@ export default function App() {
         </button>
         
         <div className="sidebar-content">
-          <button className={route === 'home' ? 'active' : ''} onClick={() => setRoute('home')}>
-            <span className="icon">🏠</span>
-            {!sidebarCollapsed && <span className="text">首頁</span>}
-          </button>
           <button className={route === 'orders' ? 'active' : ''} onClick={() => setRoute('orders')}>
             <span className="icon">📋</span>
             {!sidebarCollapsed && <span className="text">訂單</span>}

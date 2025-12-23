@@ -217,6 +217,7 @@ def import_orders_from_excel(file_path):
                     
                     # 先處理非模具子件
                     non_mold_quantities = {}  # 記錄非模具子件的數量
+                    one_prefix_undelivered = {}  # 記錄1開頭子件的未交數量
                     for bom_item in non_mold_items:
                         # 查詢子件庫存
                         component_inventory = db.query(Inventory).filter(
@@ -227,6 +228,10 @@ def import_orders_from_excel(file_path):
                         required_quantity = quantity_int  # 子件總量
                         undelivered_quantity = max(0, quantity_int - component_stock)  # 總量 - 庫存量
                         non_mold_quantities[bom_item.component_code] = required_quantity
+                        
+                        # 記錄1開頭子件的未交數量
+                        if bom_item.component_code.startswith('1'):
+                            one_prefix_undelivered[bom_item.component_code] = undelivered_quantity
                         
                         print(f"      子件 {bom_item.component_code}: 需求量={required_quantity}, 庫存={component_stock}, 未交數量={undelivered_quantity}")
                         
@@ -240,9 +245,11 @@ def import_orders_from_excel(file_path):
                             product_type='component'  # 1階子件
                         )
                         db.add(component_product)
-                        db.flush()
                     
-                    # 再處理模具子件（6開頭）
+                    # 提交非模具子件到資料庫
+                    db.flush()
+                    
+                    # 再處理模具子件（6開頭），此時1開頭子件已經在資料庫中了
                     for bom_item in mold_items:
                         # 查詢模具庫存
                         component_inventory = db.query(Inventory).filter(
@@ -250,17 +257,10 @@ def import_orders_from_excel(file_path):
                         ).first()
                         component_stock = component_inventory.quantity if component_inventory else 0
                         
-                        # 模具數量計算：找同個order_id中1開頭子件的未交數量
-                        # 先找到該訂單中所有1開頭的子件
-                        one_prefix_products = db.query(Product).filter(
-                            Product.order_id == order_id,
-                            Product.product_code.like('1%'),
-                            Product.product_type == 'component'
-                        ).all()
-                        
-                        # 使用第一個1開頭子件的未交數量作為基準（如果沒有則用成品未交數量）
-                        if one_prefix_products:
-                            base_undelivered_qty = one_prefix_products[0].undelivered_quantity
+                        # 使用剛才記錄的1開頭子件未交數量
+                        if one_prefix_undelivered:
+                            # 使用第一個1開頭子件的未交數量
+                            base_undelivered_qty = list(one_prefix_undelivered.values())[0]
                         else:
                             # 如果沒有1開頭子件，使用成品未交數量
                             base_undelivered_qty = undelivered_qty
@@ -273,11 +273,12 @@ def import_orders_from_excel(file_path):
                         
                         cavity_count = mold_calc.cavity_count if mold_calc and mold_calc.cavity_count else 1
                         
-                        # 模具數量 = ceil(1開頭子件未交數量 / 模具穴數)
+                        # 模具需求量 = ceil(1開頭子件未交數量 / 模具穴數)
                         required_quantity = math.ceil(base_undelivered_qty / cavity_count) if base_undelivered_qty > 0 else 0
-                        undelivered_quantity = max(0, required_quantity - component_stock)
+                        # 模具未交數量 = 需求量 - 模具庫存
+                        mold_undelivered_quantity = max(0, required_quantity - component_stock)
                         
-                        print(f"      模具 {bom_item.component_code}: 1開頭子件未交量={base_undelivered_qty}, 穴數={cavity_count}, 計算: ceil({base_undelivered_qty}/{cavity_count})={required_quantity}, 庫存={component_stock}, 模具未交數量={undelivered_quantity}")
+                        print(f"      模具 {bom_item.component_code}: 1開頭子件未交量={base_undelivered_qty}, 穴數={cavity_count}, 計算: ceil({base_undelivered_qty}/{cavity_count})={required_quantity}, 庫存={component_stock}, 模具未交數量={mold_undelivered_quantity}")
                         
                         # 創建模具子件產品記錄
                         component_product = Product(
@@ -285,11 +286,13 @@ def import_orders_from_excel(file_path):
                             order_id=order_id,
                             product_code=bom_item.component_code,
                             quantity=required_quantity,
-                            undelivered_quantity=undelivered_quantity,
+                            undelivered_quantity=mold_undelivered_quantity,
                             product_type='component'  # 1階子件
                         )
                         db.add(component_product)
-                        db.flush()
+                    
+                    # 提交所有子件
+                    db.flush()
                     
                     # 統一處理所有子件的排程記錄
                     for bom_item in bom_items:
@@ -402,8 +405,22 @@ def import_orders_from_excel(file_path):
                                 (MoldCalculation.component_code == comp.product_code)
                             ).first()
                             cavity_count = mold_calc.cavity_count if mold_calc and mold_calc.cavity_count else 1
-                            expected_undelivered = math.ceil(base_undelivered_qty / cavity_count) if base_undelivered_qty > 0 else 0
                             
+                            # 查詢模具庫存
+                            mold_inventory = db.query(Inventory).filter(
+                                Inventory.product_code == comp.product_code
+                            ).first()
+                            mold_stock = mold_inventory.quantity if mold_inventory else 0
+                            
+                            # 模具需求量 = ceil(1開頭子件未交量 / 穴數)
+                            mold_required = math.ceil(base_undelivered_qty / cavity_count) if base_undelivered_qty > 0 else 0
+                            # 模具未交量 = 需求量 - 庫存
+                            expected_undelivered = max(0, mold_required - mold_stock)
+                            
+                            # 同時更新 quantity（需求量）
+                            if comp.quantity != mold_required:
+                                comp.quantity = mold_required
+                                alignment_count += 1
                             if comp.undelivered_quantity != expected_undelivered:
                                 comp.undelivered_quantity = expected_undelivered
                                 alignment_count += 1
