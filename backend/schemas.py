@@ -182,3 +182,27 @@ class CompletionResponse(CompletionCreate):
     
     class Config:
         from_attributes = True
+
+# ==================== Chat 助理相關 ====================
+
+class ChatMessage(BaseModel):
+    role: str  # "user" / "assistant" / "system"
+    content: str
+
+class ChatRequest(BaseModel):
+    """
+    前端送過來的資料格式
+    - question: 使用者問的話
+    - context: （可選）系統想補充的背景，例如「你是排程系統助理」
+    - history: （可選）之前的對話紀錄
+    """
+    question: str
+    context: Optional[str] = None
+    history: Optional[List[ChatMessage]] = None
+
+class ChatResponse(BaseModel):
+    """
+    後端回給前端的格式
+    """
+    answer: str
+    model: Optional[str] = None

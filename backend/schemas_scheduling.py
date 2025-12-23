@@ -13,6 +13,7 @@ class SchedulingRequest(BaseModel):
     merge_window_weeks: int = 2  # 合併窗口（週）
     time_threshold_pct: int = 10  # 成型時間閾值(%)
     reschedule_all: bool = False  # 是否重新排程所有（包括已排程的）
+    scheduling_mode: str = 'normal'  # 排程模式：'normal' 或 'fill_all_machines'
     
 
 class ScheduleBlockResponse(BaseModel):
@@ -44,6 +45,7 @@ class SchedulingResponse(BaseModel):
     delay_reports: List[Dict]
     change_log: List[str]  # 修正為 List[str]
     execution_time_seconds: float = 0
+    ai_summary: Optional[str] = None  # LLM 生成的排程總結
 
 class ScheduleUpdateItem(BaseModel):
     """單個排程區塊更新"""

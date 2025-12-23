@@ -4,11 +4,13 @@ import Home from './pages/Home'
 import SchedulingPage from './pages/Scheduling'
 import DispatchOrderPage from './pages/DispatchOrder'
 import WorkCalendar from './pages/WorkCalendar'
+import AssistantChatPage from './pages/AssistantChat'
+import FloatingChat from './components/FloatingChat'
 
 
 
 export default function App() {
-  const [route, setRoute] = useState<'home' | 'orders' | 'machines' | 'dispatch' | 'workcalendar' | 'scenarios'>('home')
+  const [route, setRoute] = useState<'home' | 'orders' | 'machines' | 'dispatch' | 'workcalendar' | 'assistant' | 'scenarios'>('home')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
 
   return (
@@ -43,6 +45,10 @@ export default function App() {
             <span className="icon">📅</span>
             {!sidebarCollapsed && <span className="text">工作日曆</span>}
           </button>
+          <button className={route === 'assistant' ? 'active' : ''} onClick={() => setRoute('assistant')}>
+            <span className="icon">🤖</span>
+            {!sidebarCollapsed && <span className="text">聊天助理</span>}
+          </button>
         </div>
       </aside>
 
@@ -54,8 +60,12 @@ export default function App() {
         {route === 'machines' && <SchedulingPage />}
         {route === 'dispatch' && <DispatchOrderPage />}
         {route === 'workcalendar' && <WorkCalendar />}
+        {route === 'assistant' && <AssistantChatPage />}
         {route === 'scenarios' && <p>Scenarios (placeholder)</p>}
       </div>
+
+      {/* 浮動聊天窗口 - 在非助理頁面顯示 */}
+      {route !== 'assistant' && <FloatingChat />}
 
       {/* footer removed per design */}
     </div>

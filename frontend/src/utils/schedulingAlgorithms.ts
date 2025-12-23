@@ -40,6 +40,12 @@ export interface SchedulingResult {
   reason: string // 排程理由說明
 }
 
+// 排程完整結果（包含失敗訂單）
+export interface SchedulingCompleteResult {
+  results: SchedulingResult[]
+  failedOrders: Order[] // 未能排程的訂單
+}
+
 /**
  * 根據策略選擇最佳機台
  */
@@ -345,7 +351,7 @@ export function executeAutoScheduling(
   config: SchedulingConfig,
   history: MachineProductHistory[],
   downtimeSlots: { machineId: number; startHour: number; endHour: number }[]
-): SchedulingResult[] {
+): SchedulingCompleteResult {
   // 1. 先根據合併策略處理訂單
   const processedOrders = mergeOrders(orders, config.mergeStrategy)
   
@@ -359,6 +365,7 @@ export function executeAutoScheduling(
   })
   
   const results: SchedulingResult[] = []
+  const failedOrders: Order[] = []
   
   // 3. 為每個訂單分配機台和時間
   for (const order of sortedOrders) {
@@ -426,9 +433,10 @@ export function executeAutoScheduling(
       
       if (!assigned) {
         console.warn(`無法為訂單 ${order.order_number} 找到可用時段`)
+        failedOrders.push(order)
       }
     }
   }
   
-  return results
+  return { results, failedOrders }
 }

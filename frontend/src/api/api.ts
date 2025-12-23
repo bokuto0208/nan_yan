@@ -253,6 +253,7 @@ export const api = {
     merge_window_weeks?: number
     time_threshold_pct?: number
     reschedule_all?: boolean
+    scheduling_mode?: 'normal' | 'fill_all_machines'
   }): Promise<{
     success: boolean
     message: string
@@ -305,7 +306,9 @@ export const api = {
     schedules: Array<{
       id: string
       orderId: string
+      originalOrderId?: string  // 資料庫 UUID
       productId: string
+      moldCode?: string         // 模具編號
       machineId: string
       startHour: number
       endHour: number
@@ -354,6 +357,33 @@ export const api = {
     if (!response.ok) {
       const error = await response.json()
       throw new Error(error.detail || 'Failed to update schedules')
+    }
+    return response.json()
+  },
+
+  // 模具機台適配性相關 API
+  async getCompatibleMachines(moldCode: string): Promise<{mold_code: string, compatible_machines: string[]}> {
+    const response = await fetch(`${API_BASE_URL}/mold/${moldCode}/compatible-machines`)
+    if (!response.ok) throw new Error('Failed to get compatible machines')
+    return response.json()
+  },
+
+  async checkMoldMachineCompatibility(moldCode: string, machineId: string): Promise<{mold_code: string, machine_id: string, compatible: boolean}> {
+    const response = await fetch(`${API_BASE_URL}/mold/check-compatibility/${moldCode}/${machineId}`)
+    if (!response.ok) throw new Error('Failed to check compatibility')
+    return response.json()
+  },
+
+  // === 聊天助理 API ===
+  async chat(question: string, context?: string): Promise<{ answer: string; model: string }> {
+    const response = await fetch(`${API_BASE_URL}/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question, context })
+    })
+    if (!response.ok) {
+      const error = await response.text()
+      throw new Error(`Chat failed: ${error}`)
     }
     return response.json()
   }

@@ -235,6 +235,41 @@ class WorkCalendarGap(Base):
     duration_hours = Column(Float, nullable=False)                  # 持續時間（小時）
     created_at = Column(DateTime, default=datetime.utcnow)
 
+# 模具製令表 (以模具為單位的製令)
+class MoldManufacturingOrder(Base):
+    __tablename__ = "mold_manufacturing_orders"
+    
+    id = Column(String, primary_key=True)                           # 製令ID
+    mold_code = Column(String, nullable=False, index=True)          # 模具編號 (6開頭)
+    component_code = Column(String, nullable=False, index=True)     # 生產的子件編號 (1開頭)
+    total_quantity = Column(Integer, nullable=False)                # 合併後總需求數量
+    total_rounds = Column(Integer, nullable=False)                  # 總回次
+    cavity_count = Column(Integer, nullable=False)                  # 穴數
+    machine_id = Column(String, nullable=True)                      # 建議機台編號
+    earliest_due_date = Column(String, nullable=False)              # 最早交期 (YYYY-MM-DD)
+    highest_priority = Column(Integer, nullable=False)              # 最高優先級
+    scheduled_machine = Column(String, nullable=True)               # 排程機台
+    scheduled_start = Column(DateTime, nullable=True)               # 排程開始時間
+    scheduled_end = Column(DateTime, nullable=True)                 # 排程結束時間
+    status = Column(String, default="PENDING")                      # 狀態
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+# 模具製令訂單明細表 (追蹤每個訂單在模具製令中的份額)
+class MoldOrderDetail(Base):
+    __tablename__ = "mold_order_details"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    mold_mo_id = Column(String, nullable=False, index=True)         # 關聯到 mold_manufacturing_orders.id
+    order_id = Column(String, nullable=False, index=True)           # 訂單ID
+    order_number = Column(String, nullable=False)                   # 訂單號
+    product_code = Column(String, nullable=False)                   # 成品品號 (0開頭)
+    component_code = Column(String, nullable=True)                  # 子件品號 (1開頭) - 新增：記錄具體哪個子件
+    component_quantity = Column(Integer, nullable=False)            # 此訂單需要的子件數量
+    component_rounds = Column(Integer, nullable=False)              # 此訂單需要的回次
+    due_date = Column(String, nullable=False)                       # 此訂單的交期
+    priority = Column(Integer, nullable=False)                      # 此訂單的優先級
+
 # 創建所有表
 def init_db():
     Base.metadata.create_all(bind=engine)

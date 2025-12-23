@@ -6,8 +6,10 @@ import styles from './Scheduling.module.css'
 
 type WorkOrder = {
   id: string
-  orderId: string
+  orderId: string         // 訂單編號（顯示用）
+  originalOrderId?: string // 資料庫的訂單 UUID（查詢用）
   productId: string
+  moldCode?: string       // 模具編號
   machineId: string
   startHour: number
   endHour: number
@@ -24,7 +26,7 @@ type WorkOrder = {
 
 /**
  * 後端回傳的 isSplit / splitPart / totalSplits 可能因「部分更新」或 total_sequences 設定而不一致。
- * 前端以 (orderId, productId) 重新分組後計算分段資訊，確保：
+ * 前端以 (originalOrderId, productId) 重新分組後計算分段資訊，確保：
  * - 同一製令 + 子件的多段卡片一定能同步拖動
  * - 分段標籤顯示穩定
  * 
@@ -33,15 +35,21 @@ type WorkOrder = {
 function applySplitMeta(orders: WorkOrder[]): WorkOrder[] {
   const groups = new Map<string, WorkOrder[]>()
 
+  console.log(`🔍 applySplitMeta: 處理 ${orders.length} 筆訂單`)
+
   for (const o of orders) {
-    const key = `${o.orderId}__${o.productId}`
+    // ⭐ 使用 originalOrderId（資料庫 UUID）而非 orderId（訂單編號）來分組
+    const orderKey = o.originalOrderId || o.orderId
+    const key = `${orderKey}__${o.productId}`
     const arr = groups.get(key)
     if (arr) arr.push(o)
     else groups.set(key, [o])
   }
 
+  console.log(`📦 分組結果: ${groups.size} 個群組`)
+
   const rebuilt: WorkOrder[] = []
-  for (const [, group] of groups) {
+  for (const [key, group] of groups) {
     const sorted = [...group].sort((a, b) => {
       // 先依 startHour 排序，若 startHour 相同再依 id 以確保穩定
       if (a.startHour !== b.startHour) return a.startHour - b.startHour
@@ -49,10 +57,14 @@ function applySplitMeta(orders: WorkOrder[]): WorkOrder[] {
     })
     const total = sorted.length
     
+    console.log(`  群組 ${key}: ${total} 個區塊, originalOrderId=${sorted[0]?.originalOrderId}, orderId=${sorted[0]?.orderId}`)
+    
     // 如果後端已經標記為分段，保留後端的 totalSplits 資訊
     const backendTotalSplits = sorted[0]?.totalSplits
     const actualTotal = backendTotalSplits && backendTotalSplits > total ? backendTotalSplits : total
     const isSplit = actualTotal > 1
+    
+    console.log(`    => isSplit=${isSplit}, actualTotal=${actualTotal}, backendTotalSplits=${backendTotalSplits}`)
     
     for (let i = 0; i < total; i += 1) {
       const order = sorted[i]
@@ -118,6 +130,8 @@ export default function SchedulingPage() {
   const [panState, setPanState] = useState<PanState | null>(null)
   const [dragPreview, setDragPreview] = useState<{ startHour: number; endHour: number; machineId: string } | null>(null)
   const [isOffWorkConflict, setIsOffWorkConflict] = useState(false)
+  const [incompatibleMachine, setIncompatibleMachine] = useState<string | null>(null) // 不適配的機台提示
+  const [machineCompatibility, setMachineCompatibility] = useState<Record<string, boolean>>({}) // 拖拽時各機台適配性
   
   // 機台和區域狀態
   const [machines, setMachines] = useState<{ machine_id: string; area: string }[]>([])
@@ -141,15 +155,24 @@ export default function SchedulingPage() {
     endTime: '09:00'
   })
   
+  // 模式比較狀態
+  const [isComparingModes, setIsComparingModes] = useState(false)
+  const [modeComparisonResult, setModeComparisonResult] = useState<any>(null)
+  
   // 排程配置狀態
   const [showSchedulingConfig, setShowSchedulingConfig] = useState(false)
   const [schedulingConfig, setSchedulingConfig] = useState({
-    merge_enabled: true,
+    merge_enabled: true, // 強制啟用合併，不允許關閉
     merge_window_weeks: 2,
     time_threshold_pct: 10,
-    reschedule_all: false
+    reschedule_all: false,
+    scheduling_mode: 'normal' // 新增：'normal' 或 'fill_all_machines'
   })
   const [isScheduling, setIsScheduling] = useState(false)
+  
+  // 失敗訂單對話框狀態
+  const [showFailedOrdersDialog, setShowFailedOrdersDialog] = useState(false)
+  const [failedOrders, setFailedOrders] = useState<string[]>([])
   
   // Cross-day scheduling dialog state (跨日排程確認對話框)
   const [showCrossDayDialog, setShowCrossDayDialog] = useState(false)
@@ -276,21 +299,26 @@ export default function SchedulingPage() {
         console.log('📊 載入已排程資料:', schedules.length, '筆')
         
         // Convert backend schedules to WorkOrder format
-        let scheduledWorkOrders: WorkOrder[] = schedules.map(schedule => ({
-          id: schedule.id,
-          orderId: schedule.orderId,
-          productId: schedule.productId,
-          machineId: schedule.machineId,
-          startHour: schedule.startHour,
-          endHour: schedule.endHour,
-          scheduledDate: schedule.scheduledDate, // 包含排程日期
-          status: schedule.status as 'running' | 'idle',
-          aiLocked: schedule.aiLocked,
-          isSplit: schedule.isSplit,
-          splitPart: schedule.splitPart,
-          totalSplits: schedule.totalSplits,
-          originalId: schedule.id // 記錄原始 ID，用於儲存時刪除舊資料
-        }))
+        let scheduledWorkOrders: WorkOrder[] = schedules.map(schedule => {
+          console.log('📋 載入排程:', schedule.id, '模具:', schedule.moldCode)
+          return {
+            id: schedule.id,
+            orderId: schedule.orderId,  // 訂單編號（顯示用）
+            originalOrderId: schedule.originalOrderId,  // 資料庫 UUID（查詢用）
+            productId: schedule.productId,
+            moldCode: schedule.moldCode,  // 新增模具編號
+            machineId: schedule.machineId,
+            startHour: schedule.startHour,
+            endHour: schedule.endHour,
+            scheduledDate: schedule.scheduledDate, // 包含排程日期
+            status: schedule.status as 'running' | 'idle',
+            aiLocked: schedule.aiLocked,
+            isSplit: schedule.isSplit,
+            splitPart: schedule.splitPart,
+            totalSplits: schedule.totalSplits,
+            originalId: schedule.id // 記錄原始 ID，用於儲存時刪除舊資料
+          }
+        })
         
         // 重新計算分段資訊，避免後端 isSplit/total_sequences 不一致造成「無法同步拖動」
         setWorkOrders(applySplitMeta(scheduledWorkOrders))
@@ -386,21 +414,25 @@ export default function SchedulingPage() {
     return labels[status as keyof typeof labels] || status
   }
   
-  const filteredOrders = workOrders.filter((wo) => {
-    // Filter by status
-    if (filteredStatus !== 'all' && wo.status !== filteredStatus) {
-      return false
-    }
+  const filteredOrders = useMemo(() => {
+    const filtered = workOrders.filter((wo) => {
+      // Filter by status
+      if (filteredStatus !== 'all' && wo.status !== filteredStatus) {
+        return false
+      }
+      
+      // 篩選：只顯示當前選擇日期的排程區塊
+      // workOrders 從 API 載入時已經包含 scheduledDate 欄位
+      // 這個欄位來自後端的區塊分割邏輯，每個區塊都有自己的日期
+      if (wo.scheduledDate && wo.scheduledDate !== selectedDate) {
+        return false
+      }
+      
+      return true
+    })
     
-    // 篩選：只顯示當前選擇日期的排程區塊
-    // workOrders 從 API 載入時已經包含 scheduledDate 欄位
-    // 這個欄位來自後端的區塊分割邏輯，每個區塊都有自己的日期
-    if (wo.scheduledDate && wo.scheduledDate !== selectedDate) {
-      return false
-    }
-    
-    return true
-  })
+    return filtered
+  }, [workOrders, filteredStatus, selectedDate])
   
   // Format time for display
   const formatTime = (hour: number): string => {
@@ -427,24 +459,45 @@ export default function SchedulingPage() {
     e.preventDefault()
     if (!timelineRef.current) return
     
+    console.log('🖱️ 開始拖拉卡片:', {
+      orderId: order.orderId,
+      productId: order.productId,
+      moldCode: order.moldCode,
+      machineId: order.machineId,
+      startHour: order.startHour,
+      endHour: order.endHour
+    })
+    
     const rect = timelineRef.current.getBoundingClientRect()
     // 在全螢幕模式下，機台標籤列可能不在視口內，需要動態計算
     const labelsColumn = document.querySelector(`.${styles.machineLabelsColumn}`) as HTMLElement
     const labelWidth = labelsColumn ? labelsColumn.offsetWidth : MACHINE_LABEL_WIDTH
     const mouseX = e.clientX - rect.left
     
-    // 以目前 workOrders 的分組結果判斷是否為分段，避免後端 isSplit 不一致導致同步拖動失效
-    const groupCount = workOrders.filter(
-      wo => wo.orderId === order.orderId && wo.productId === order.productId
-    ).length
-    const isSplit = groupCount > 1
-
+    // 非同步檢查所有機台的適配性（不阻塞拖拽開始）
+    if (order.moldCode) {
+      const checkCompatibility = async () => {
+        const compatibility: Record<string, boolean> = {}
+        for (const machine of filteredMachines) {
+          try {
+            const result = await api.checkMoldMachineCompatibility(order.moldCode, machine.machine_id)
+            compatibility[machine.machine_id] = result.compatible
+          } catch (error) {
+            console.error(`檢查機台 ${machine.machine_id} 適配性失敗:`, error)
+            compatibility[machine.machine_id] = true // 預設為適配，避免意外限制
+          }
+        }
+        setMachineCompatibility(compatibility)
+      }
+      checkCompatibility()
+    } else {
+      setMachineCompatibility({}) // 沒有模具編號，所有機台都適配
+    }
+    
+    // 直接使用 applySplitMeta() 已經計算好的 isSplit 和 totalSplits
+    // 即使當前日期只顯示部分分段，這些屬性也會正確反映總分段數
     setDragState({
-      order: {
-        ...order,
-        isSplit,
-        totalSplits: isSplit ? groupCount : undefined
-      },
+      order: order,
       offsetX: mouseX - timeline.timeToX(order.startHour),
       initialX: mouseX
     })
@@ -484,6 +537,30 @@ export default function SchedulingPage() {
       const machineIndex = Math.floor(mouseY / MACHINE_ROW_HEIGHT)
       const targetMachine = filteredMachines[machineIndex]?.machine_id || dragState.order.machineId
       
+      // Check mold-machine compatibility
+      const checkCompatibility = async () => {
+        if (dragState.order.moldCode) {
+          try {
+            console.log(`🔍 檢查適配性: 模具=${dragState.order.moldCode}, 機台=${targetMachine}`)
+            const compatibilityResult = await api.checkMoldMachineCompatibility(dragState.order.moldCode, targetMachine)
+            console.log('✅ 適配性結果:', compatibilityResult)
+            if (!compatibilityResult.compatible) {
+              setIncompatibleMachine(`該模具 ${dragState.order.moldCode} 不適配機台 ${targetMachine}`)
+            } else {
+              setIncompatibleMachine(null)
+            }
+          } catch (error) {
+            console.error('❌ 適配性檢查失敗:', error)
+            setIncompatibleMachine(null)
+          }
+        } else {
+          console.log('⚠️ 無模具編號，跳過適配性檢查')
+          setIncompatibleMachine(null)
+        }
+      }
+      
+      checkCompatibility()
+      
       // Update drag preview for live card movement
       setDragPreview({
         startHour: clampedStart,
@@ -508,7 +585,7 @@ export default function SchedulingPage() {
       })
     }
     
-    const handleMouseUp = (e: MouseEvent) => {
+    const handleMouseUp = async (e: MouseEvent) => {
       if (!timelineRef.current || !dragState) return
       
       const rect = timelineRef.current.getBoundingClientRect()
@@ -585,10 +662,16 @@ export default function SchedulingPage() {
         const overlaps = wo.startHour < clampedEnd && wo.endHour > clampedStart
         if (!overlaps) return false
 
-        // ✅ 同品號 -> 放行（不觸發 overlap 衝突）
-        if (wo.productId === dragState.order.productId) return false
+        // ✅ 同一個訂單的不同子件 -> 放行（不觸發 overlap 衝突）
+        const dragOrderId = dragState.order.originalOrderId || dragState.order.orderId
+        const woOrderId = wo.originalOrderId || wo.orderId
+        if (dragOrderId === woOrderId) {
+          console.log(`✅ 同訂單子件放行: ${wo.productId} 與 ${dragState.order.productId} 屬於同訂單 ${woOrderId}`)
+          return false
+        }
 
-        // ❌ 不同品號且重疊 -> 視為衝突
+        // ❌ 不同訂單且重疊 -> 視為衝突
+        console.log(`🚫 訂單衝突檢測: ${wo.productId} (訂單${woOrderId}) 與 ${dragState.order.productId} (訂單${dragOrderId}) 在機台 ${targetMachine} 重疊`)
         return true
       })      
       // Check if the new schedule overlaps with off-work hours
@@ -602,7 +685,36 @@ export default function SchedulingPage() {
         return clampedStart < overlay.endHour && clampedEnd > (overlay.startHour + 0.001)
       })
       
-      if (!hasDowntimeConflict && !hasOrderConflict) {
+      // Check mold-machine compatibility
+      let isCompatible = true;
+      if (dragState.order.moldCode) {
+        try {
+          const compatibilityResult = await api.checkMoldMachineCompatibility(dragState.order.moldCode, targetMachine);
+          if (!compatibilityResult.compatible) {
+            isCompatible = false;
+            // Show error message
+            alert(`⚠️ 模具 ${dragState.order.moldCode} 不適配機台 ${targetMachine}，無法放置到此位置！`);
+            setDragState(null);
+            setSnapLineX(null);
+            setDragTooltip(null);
+            setDragPreview(null);
+            setIsOffWorkConflict(false);
+            setIncompatibleMachine(null);
+            setMachineCompatibility({}); // Clear machine compatibility
+            return;
+          }
+        } catch (error) {
+          console.error('Error checking mold compatibility:', error);
+        }
+      }
+
+      console.log(`🔍 衝突檢查結果: 
+        停機時間衝突: ${hasDowntimeConflict}
+        訂單衝突: ${hasOrderConflict} 
+        適配性: ${isCompatible}
+        下班時間重疊: ${hasOffWorkOverlap}`)
+        
+      if (!hasDowntimeConflict && !hasOrderConflict && isCompatible) {
         if (hasOffWorkOverlap) {
           // Show cross-day scheduling confirmation dialog (顯示跨日排程確認對話框)
           setPendingCrossDaySchedule({
@@ -615,15 +727,22 @@ export default function SchedulingPage() {
         } else {
           // Normal schedule update (正常排程更新)
           
+          console.log(`🔍 拖動檢查: isSplit=${dragState.order.isSplit}, splitPart=${dragState.order.splitPart}, totalSplits=${dragState.order.totalSplits}`)
+          
           // Check if this is a split order that needs synchronized adjustment
           // (檢查是否為需要同步調整的分割訂單)
           if (dragState.order.isSplit && dragState.order.totalSplits && dragState.order.totalSplits > 1) {
-            const { splitPart, totalSplits, orderId, productId } = dragState.order
+            const { splitPart, totalSplits, productId } = dragState.order
+            const orderKey = dragState.order.originalOrderId || dragState.order.orderId
             
-            // 找到同一製令的所有區塊
-            const baseBlockId = dragState.order.id.replace(/-\d+$/, '') // 移除 "-1", "-2" 等後綴
+            console.log(`✅ 進入分割訂單邏輯: splitPart=${splitPart}, orderKey=${orderKey}`)
+            
+            // 找到同一製令的所有區塊（使用 originalOrderId 來判斷）
             const allParts = workOrders
-              .filter(wo => wo.orderId === orderId && wo.productId === productId)
+              .filter(wo => {
+                const woKey = wo.originalOrderId || wo.orderId
+                return woKey === orderKey && wo.productId === productId
+              })
               .sort((a, b) => {
                 const ap = a.splitPart ?? 0
                 const bp = b.splitPart ?? 0
@@ -631,37 +750,51 @@ export default function SchedulingPage() {
                 return a.startHour - b.startHour
               })
             
+            console.log(`📦 找到 ${allParts.length} 個分段`)
+            
             if (splitPart === 1) {
               // ========== 拖拉第一段 (Head) ==========
               // 邏輯：第一段結束時間固定為下班時間，拖拉改變開始時間 -> 改變第一段長度 -> 反向改變第二段長度
               
-              // 1. 計算當天的下班時間 (第一段的錨點)
-              // 這裡需要找到「最接近且大於 clampedStart」的下班時間
-              // 假設下班時間是 17:00 (17.0) 或 20:00 (20.0)
-              // 如果 clampedStart 是 13:00，我們應該找到 17:00
+              console.log(`🔧 拖動第一段: clampedStart=${clampedStart}`)
               
-              // 先過濾出所有在 clampedStart 之後的下班時間點
-              const validOffWorkOverlays = getOffWorkOverlays
-                .filter(overlay => overlay.startHour > clampedStart)
-                .sort((a, b) => a.startHour - b.startHour)
+              // 1. 計算下班時間 (第一段的錨點)
+              // 根據拖拉位置計算對應的日期，然後取得該日的下班時間
+              let offWorkHour: number
               
-              // 取第一個作為下班時間，如果沒有則預設為 24:00
-              const offWorkHour = validOffWorkOverlays.length > 0 ? validOffWorkOverlays[0].startHour : 24
+              if (clampedStart < 24) {
+                // 在當天範圍內，使用當天的下班時間
+                offWorkHour = getOffWorkHour(selectedDate)
+                console.log(`📅 使用當天下班時間: ${selectedDate} -> ${offWorkHour}`)
+              } else {
+                // 跨到次日（24-32），使用次日的下班時間
+                const nextDay = new Date(selectedDate)
+                nextDay.setDate(nextDay.getDate() + 1)
+                const nextDayStr = nextDay.toISOString().split('T')[0]
+                const nextDayOffWork = getOffWorkHour(nextDayStr)
+                // 次日下班時間需要加24小時偏移（因為在時間軸上）
+                offWorkHour = 24 + nextDayOffWork
+                console.log(`📅 使用次日下班時間: ${nextDayStr} -> ${nextDayOffWork} (時間軸座標: ${offWorkHour})`)
+              }
               
               // 2. 第一段強制填滿到下班時間
               const adjustedEnd = offWorkHour
+              console.log(`✅ 第一段結束時間固定為: ${adjustedEnd}`)
               
               // 3. 計算第一段的新長度與長度變化
               const originalPart1Duration = dragState.order.endHour - dragState.order.startHour
               const newPart1Duration = adjustedEnd - clampedStart
               const durationChange = newPart1Duration - originalPart1Duration // 正數=變長(往左拉)，負數=變短(往右拉)
               
+              console.log(`📏 第一段長度變化: ${originalPart1Duration} -> ${newPart1Duration} (delta: ${durationChange})`)
+              
               // 4. 更新所有相關區塊
               const lastPart = allParts[allParts.length - 1]
               
               setWorkOrders(prev => prev.map(wo => {
-                // 檢查是否為同一組分割訂單 (移除 isSplit 檢查，因為後端可能導致 isSplit 狀態不一致)
-                const isGroupMember = wo.orderId === orderId && wo.productId === productId;
+                // 檢查是否為同一組分割訂單（使用 originalOrderId）
+                const woKey = wo.originalOrderId || wo.orderId
+                const isGroupMember = woKey === orderKey && wo.productId === productId;
                 
                 if (wo.id === dragState.order.id) {
                   // 更新第一段：開始時間=拖拉位置，結束時間=下班時間，機台=目標機台
@@ -710,8 +843,9 @@ export default function SchedulingPage() {
               const firstPart = allParts[0]
               
               setWorkOrders(prev => prev.map(wo => {
-                // 檢查是否為同一組分割訂單 (移除 isSplit 檢查)
-                const isGroupMember = wo.orderId === orderId && wo.productId === productId;
+                // 檢查是否為同一組分割訂單（使用 originalOrderId）
+                const woKey = wo.originalOrderId || wo.orderId
+                const isGroupMember = woKey === orderKey && wo.productId === productId;
 
                 if (wo.id === dragState.order.id) {
                   // 更新最後一段：開始時間=上班時間，結束時間=拖拉位置，機台=目標機台
@@ -748,18 +882,26 @@ export default function SchedulingPage() {
                 return wo
               }))
             } else {
-              // 中間段 - 更新所有相關區塊的機台
+              // ========== 拖拉中間段 (Middle) ==========
+              // 邏輯：整段平移，所有區塊跟著移動（流體式拖拉）
+              
+              // 計算拖動的時間偏移量
+              const draggedBlock = dragState.order
+              const timeDelta = clampedStart - draggedBlock.startHour
+              
               setWorkOrders(prev => prev.map(wo => {
-                const isGroupMember = wo.orderId === orderId && wo.productId === productId;
+                const woKey = wo.originalOrderId || wo.orderId
+                const isGroupMember = woKey === orderKey && wo.productId === productId
+                
                 if (isGroupMember) {
-                   // 如果是拖拉中間段，我們假設只改變機台，不改變時間結構
-                   // 或者如果需要改變時間，這裡需要更複雜的邏輯
-                   // 目前先實作：拖拉中間段 -> 整組換機台，時間平移(如果有的話)
-                   // 但因為中間段通常是滿的，所以只換機台比較合理
-                   
-                   // 如果是當前拖拉的區塊，應用拖拉的時間 (雖然中間段通常是滿的，但允許微調?)
-                   // 為了保持簡單且符合 "連動" 的直覺，拖拉中間段通常意味著 "整組換機台"
-                   return { ...wo, machineId: targetMachine, isModified: true }
+                  // 整組區塊都平移相同的時間量
+                  return { 
+                    ...wo, 
+                    machineId: targetMachine, 
+                    startHour: wo.startHour + timeDelta,
+                    endHour: wo.endHour + timeDelta,
+                    isModified: true 
+                  }
                 }
                 return wo
               }))
@@ -788,6 +930,8 @@ export default function SchedulingPage() {
       setDragTooltip(null)
       setDragPreview(null)
       setIsOffWorkConflict(false)
+      setIncompatibleMachine(null) // Clear compatibility state
+      setMachineCompatibility({}) // Clear machine compatibility state
     }
     
     document.addEventListener('mousemove', handleMouseMove)
@@ -1031,6 +1175,121 @@ export default function SchedulingPage() {
     }
   }
   
+  // Handle 排程模式比較
+  const handleCompareSchedulingModes = async () => {
+    setIsComparingModes(true)
+    
+    try {
+      // 執行標準排程模式
+      console.log('🔍 執行標準排程模式...')
+      const normalResult = await api.runScheduling({
+        order_ids: undefined,
+        merge_enabled: schedulingConfig.merge_enabled,
+        merge_window_weeks: schedulingConfig.merge_window_weeks,
+        time_threshold_pct: schedulingConfig.time_threshold_pct,
+        reschedule_all: schedulingConfig.reschedule_all,
+        scheduling_mode: 'normal'
+      })
+      
+      // 執行填滿機台模式
+      console.log('🔍 執行填滿機台模式...')
+      const fillResult = await api.runScheduling({
+        order_ids: undefined,
+        merge_enabled: schedulingConfig.merge_enabled,
+        merge_window_weeks: schedulingConfig.merge_window_weeks,
+        time_threshold_pct: schedulingConfig.time_threshold_pct,
+        reschedule_all: schedulingConfig.reschedule_all,
+        scheduling_mode: 'fill_all_machines'
+      })
+      
+      // 計算量化指標
+      const comparison = {
+        normal: {
+          total_mos: normalResult.total_mos,
+          scheduled_mos: normalResult.scheduled_mos.length,
+          failed_mos: normalResult.failed_mos.length,
+          on_time_count: normalResult.on_time_count,
+          late_count: normalResult.late_count,
+          execution_time: normalResult.execution_time_seconds,
+          success_rate: (normalResult.scheduled_mos.length / normalResult.total_mos * 100).toFixed(1),
+          on_time_rate: normalResult.total_mos > 0 ? (normalResult.on_time_count / normalResult.total_mos * 100).toFixed(1) : 0
+        },
+        fill_all_machines: {
+          total_mos: fillResult.total_mos,
+          scheduled_mos: fillResult.scheduled_mos.length,
+          failed_mos: fillResult.failed_mos.length,
+          on_time_count: fillResult.on_time_count,
+          late_count: fillResult.late_count,
+          execution_time: fillResult.execution_time_seconds,
+          success_rate: (fillResult.scheduled_mos.length / fillResult.total_mos * 100).toFixed(1),
+          on_time_rate: fillResult.total_mos > 0 ? (fillResult.on_time_count / fillResult.total_mos * 100).toFixed(1) : 0
+        }
+      }
+      
+      // 計算差異
+      const scheduled_diff = comparison.fill_all_machines.scheduled_mos - comparison.normal.scheduled_mos
+      const failed_diff = comparison.fill_all_machines.failed_mos - comparison.normal.failed_mos
+      const ontime_diff = parseFloat(comparison.fill_all_machines.on_time_rate as string) - parseFloat(comparison.normal.on_time_rate as string)
+      const time_diff = comparison.fill_all_machines.execution_time - comparison.normal.execution_time
+      
+      // 生成比較報告
+      const comparisonReport = [
+        `📊 排程模式量化比較報告`,
+        ``,
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+        `📈 標準排程模式：`,
+        `  • 成功排程率: ${comparison.normal.success_rate}%`,
+        `  • 準時完成率: ${comparison.normal.on_time_rate}%`,
+        `  • 成功排程: ${comparison.normal.scheduled_mos} 筆`,
+        `  • 失敗訂單: ${comparison.normal.failed_mos} 筆`,
+        `  • 準時訂單: ${comparison.normal.on_time_count} 筆`,
+        `  • 延遲訂單: ${comparison.normal.late_count} 筆`,
+        `  • 執行時間: ${comparison.normal.execution_time.toFixed(2)} 秒`,
+        ``,
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+        `🎯 填滿機台模式：`,
+        `  • 成功排程率: ${comparison.fill_all_machines.success_rate}%`,
+        `  • 準時完成率: ${comparison.fill_all_machines.on_time_rate}%`,
+        `  • 成功排程: ${comparison.fill_all_machines.scheduled_mos} 筆`,
+        `  • 失敗訂單: ${comparison.fill_all_machines.failed_mos} 筆`,
+        `  • 準時訂單: ${comparison.fill_all_machines.on_time_count} 筆`,
+        `  • 延遲訂單: ${comparison.fill_all_machines.late_count} 筆`,
+        `  • 執行時間: ${comparison.fill_all_machines.execution_time.toFixed(2)} 秒`,
+        ``,
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+        `🔍 量化差異分析（填滿機台 vs 標準）：`,
+        `  • 成功排程差異: ${scheduled_diff > 0 ? '+' : ''}${scheduled_diff} 筆 ${scheduled_diff > 0 ? '✅' : scheduled_diff < 0 ? '❌' : '➖'}`,
+        `  • 失敗訂單差異: ${failed_diff > 0 ? '+' : ''}${failed_diff} 筆 ${failed_diff < 0 ? '✅' : failed_diff > 0 ? '❌' : '➖'}`,
+        `  • 準時率差異: ${ontime_diff > 0 ? '+' : ''}${ontime_diff.toFixed(1)}% ${ontime_diff > 0 ? '✅' : ontime_diff < 0 ? '❌' : '➖'}`,
+        `  • 執行時間差異: ${time_diff > 0 ? '+' : ''}${time_diff.toFixed(2)} 秒`,
+        ``,
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+        `💡 AI 建議：`,
+        scheduled_diff > 0 && ontime_diff >= 0 
+          ? `填滿機台模式表現更優，建議採用！多排程了 ${scheduled_diff} 筆訂單，且準時率${ontime_diff > 0 ? '提升' : '持平'}。`
+          : scheduled_diff <= 0 && ontime_diff > 0
+          ? `標準模式準時率較高 (+${ontime_diff.toFixed(1)}%)，但排程數量較少。若追求交期準確度，建議採用標準模式。`
+          : scheduled_diff > 0 && ontime_diff < 0
+          ? `填滿機台模式能排程更多訂單 (+${scheduled_diff})，但準時率下降 (${ontime_diff.toFixed(1)}%)。需在產能與交期間權衡。`
+          : `兩種模式表現相近，可依據實際需求選擇。標準模式較保守，填滿模式追求最大產能利用率。`
+      ].join('\n')
+      
+      // 發送比較報告到浮動聊天窗口
+      const event = new CustomEvent('floatingChatMessage', {
+        detail: { message: comparisonReport, autoOpen: true }
+      })
+      window.dispatchEvent(event)
+      
+      setModeComparisonResult(comparison)
+      
+    } catch (error) {
+      console.error('比較排程模式錯誤:', error)
+      alert(`比較失敗: ${error instanceof Error ? error.message : '未知錯誤'}`)
+    } finally {
+      setIsComparingModes(false)
+    }
+  }
+  
   // Handle 排程
   const handleScheduling = async () => {
     setIsScheduling(true)
@@ -1042,46 +1301,74 @@ export default function SchedulingPage() {
         merge_enabled: schedulingConfig.merge_enabled,
         merge_window_weeks: schedulingConfig.merge_window_weeks,
         time_threshold_pct: schedulingConfig.time_threshold_pct,
-        reschedule_all: schedulingConfig.reschedule_all
+        reschedule_all: schedulingConfig.reschedule_all,
+        scheduling_mode: schedulingConfig.scheduling_mode
       })
       
-      if (result.success) {
+      // 只要不是系統錯誤（result.success = true 或有部分成功），都視為成功
+      if (result.success || result.scheduled_mos.length > 0) {
         // 排程完成後，重新從後端載入排程結果
-        // 後端已經處理了區塊分割和時間計算
-        const { schedules } = await api.getScheduledComponents(selectedDate)
+        // 注意：排程結果可能分布在多個日期，所以這裡載入所有排程
+        const { schedules } = await api.getScheduledComponents()  // 不限制日期，載入所有排程
+        console.log('📊 排程完成，載入結果:', schedules.length, '筆排程區塊')
+        
+        // 找出第一個排程的日期，自動切換到該日期
+        const firstSchedule = schedules.find(s => s.scheduledDate)
+        if (firstSchedule && firstSchedule.scheduledDate) {
+          console.log('🔄 切換到第一個排程日期:', firstSchedule.scheduledDate)
+          setSelectedDate(firstSchedule.scheduledDate)
+        }
+        
         const scheduledWorkOrders: WorkOrder[] = schedules.map(schedule => ({
           id: schedule.id,
           orderId: schedule.orderId,
+          originalOrderId: schedule.originalOrderId,  // 資料庫 UUID
           productId: schedule.productId,
+          moldCode: schedule.moldCode,  // 新增模具編號
           machineId: schedule.machineId,
           startHour: schedule.startHour,
           endHour: schedule.endHour,
           scheduledDate: schedule.scheduledDate,
           status: schedule.status as 'running' | 'idle',
-          aiLocked: schedule.aiLocked
+          aiLocked: schedule.aiLocked,
+          isSplit: schedule.isSplit,
+          splitPart: schedule.splitPart,
+          totalSplits: schedule.totalSplits
         }))
         
         // 重新計算分段資訊，避免後端 isSplit/total_sequences 不一致造成「無法同步拖動」
         setWorkOrders(applySplitMeta(scheduledWorkOrders))
+        
+        // 自動關閉排程配置視窗
         setShowSchedulingConfig(false)
         
-        // 顯示排程完成通知
-        const successMsg = [
-          `✅ 排程完成！`,
+        // 檢查是否有失敗訂單
+        if (result.failed_mos && result.failed_mos.length > 0) {
+          setFailedOrders(result.failed_mos)
+          setShowFailedOrdersDialog(true)
+        }
+        
+        // 將 AI 總結發送到浮動聊天窗口（自動打開）
+        const summaryMessage = [
+          `📊 排程執行完成報告`,
           ``,
-          `📊 統計資訊：`,
-          `- 總訂單數: ${result.total_mos}`,
-          `- 成功排程: ${result.scheduled_mos.length}`,
-          `- 失敗訂單: ${result.failed_mos.length}`,
-          `- 準時完成: ${result.on_time_count}`,
-          `- 延遲訂單: ${result.late_count}`,
+          `統計資訊：`,
+          `• 總訂單數: ${result.total_mos}`,
+          `• 成功排程: ${result.scheduled_mos.length}`,
+          `• 失敗訂單: ${result.failed_mos.length}`,
+          `• 準時完成: ${result.on_time_count}`,
+          `• 延遲訂單: ${result.late_count}`,
+          `• 執行時間: ${result.execution_time_seconds.toFixed(2)}秒`,
           ``,
-          `⏱️ 執行時間: ${result.execution_time_seconds.toFixed(2)}秒`,
-          ``,
-          result.change_log.length > 0 ? `📝 變更記錄：\n${result.change_log.slice(0, 5).join('\n')}` : ''
+          `🤖 AI 分析：`,
+          result.ai_summary || '（AI 分析未生成）'
         ].join('\n')
         
-        alert(successMsg)
+        // 發送自定義事件給 FloatingChat，自動打開窗口
+        const event = new CustomEvent('floatingChatMessage', {
+          detail: { message: summaryMessage, autoOpen: true }
+        })
+        window.dispatchEvent(event)
       } else {
         alert(`❌ 排程失敗：\n${result.message}`)
       }
@@ -1101,13 +1388,21 @@ export default function SchedulingPage() {
         {/* Fullscreen button */}
         <button
           onClick={toggleFullscreen}
-          className={styles.fullscreenButton}
           title={isFullscreen ? '退出全螢幕 (ESC)' : '展開甘特圖'}
+          style={{
+            padding: '10px 20px',
+            background: 'linear-gradient(135deg, #8b5cf6, #7c3aed)',
+            border: 'none',
+            borderRadius: 8,
+            color: '#fff',
+            fontSize: 14,
+            fontWeight: 600,
+            cursor: 'pointer',
+            transition: 'all 0.2s',
+            boxShadow: '0 4px 12px rgba(139,92,246,0.3)'
+          }}
         >
-          {isFullscreen ? '⛶' : '⛶'}
-          <span className={styles.fullscreenButtonText}>
-            {isFullscreen ? '縮小' : '展開'}
-          </span>
+          {isFullscreen ? '縮小' : '展開'}
         </button>
         
         <div className="toolbar-section">
@@ -1116,41 +1411,34 @@ export default function SchedulingPage() {
           </label>
         </div>
         
-        <div className="toolbar-section">
-          <button
-            onClick={() => setViewMode('machine')}
-            className={viewMode === 'machine' ? 'active' : ''}
-          >
-            機台視角
-          </button>
-          <button
-            onClick={() => setViewMode('order')}
-            className={viewMode === 'order' ? 'active' : ''}
-          >
-            訂單視角
-          </button>
-        </div>
-        
         <div className="toolbar-section zoom-controls">
-          <label>縮放</label>
-          <input
-            type="range"
-            min="0.5"
-            max="6"
-            step="0.1"
+          <label>時間顆粒度</label>
+          <select
             value={timeline.zoom}
             onChange={(e) => timeline.setZoom(parseFloat(e.target.value))}
-            className="zoom-slider"
-          />
-          <span className="zoom-value">{timeline.zoom.toFixed(1)}x</span>
-          <button onClick={() => timeline.setZoom(1)} className="zoom-reset-btn">重置</button>
+            style={{
+              padding: '8px 12px',
+              background: 'rgba(255,255,255,0.1)',
+              border: '1px solid rgba(255,255,255,0.2)',
+              borderRadius: 6,
+              color: '#fff',
+              fontSize: 14,
+              cursor: 'pointer',
+              outline: 'none'
+            }}
+          >
+            <option value="0.5" style={{ background: '#1a1a2e', color: '#fff' }}>0.5x - 粗略 (2小時)</option>
+            <option value="1" style={{ background: '#1a1a2e', color: '#fff' }}>1.0x - 標準 (1小時)</option>
+            <option value="2" style={{ background: '#1a1a2e', color: '#fff' }}>2.0x - 精細 (30分鐘)</option>
+            <option value="6" style={{ background: '#1a1a2e', color: '#fff' }}>6.0x - 極細 (10分鐘)</option>
+          </select>
           <span className="snap-indicator" style={{ 
-            fontSize: 10, 
-            color: 'rgba(255,255,255,0.5)',
+            fontSize: 11, 
+            color: 'rgba(255,255,255,0.6)',
             marginLeft: 8,
-            padding: '4px 8px',
+            padding: '6px 10px',
             background: 'rgba(30,160,233,0.1)',
-            borderRadius: 4,
+            borderRadius: 6,
             border: '1px solid rgba(30,160,233,0.2)'
           }}>
             貼齊: {timeline.getSnapInterval() >= 1 
@@ -1161,15 +1449,44 @@ export default function SchedulingPage() {
         
         <div className="toolbar-section">
           <button 
-            className="primary-btn"
             onClick={() => setShowSchedulingConfig(true)}
             disabled={isScheduling}
             style={{
+              padding: '10px 20px',
+              background: isScheduling ? 'rgba(255,255,255,0.1)' : 'linear-gradient(135deg, #6366f1, #4f46e5)',
+              border: 'none',
+              borderRadius: 8,
+              color: '#fff',
+              fontSize: 14,
+              fontWeight: 600,
+              cursor: isScheduling ? 'not-allowed' : 'pointer',
               opacity: isScheduling ? 0.6 : 1,
-              cursor: isScheduling ? 'not-allowed' : 'pointer'
+              transition: 'all 0.2s',
+              boxShadow: isScheduling ? 'none' : '0 4px 12px rgba(99,102,241,0.3)'
             }}
           >
-            {isScheduling ? '⏳ 排程中...' : '🚀 開始排程'}
+            {isScheduling ? '排程中...' : '開始排程'}
+          </button>
+          
+          <button 
+            onClick={handleCompareSchedulingModes}
+            disabled={isComparingModes || isScheduling}
+            style={{
+              padding: '10px 20px',
+              background: isComparingModes ? 'rgba(139,92,246,0.5)' : 'linear-gradient(135deg, #8b5cf6, #7c3aed)',
+              border: 'none',
+              borderRadius: 8,
+              color: '#fff',
+              fontSize: 14,
+              fontWeight: 600,
+              cursor: (isComparingModes || isScheduling) ? 'not-allowed' : 'pointer',
+              transition: 'all 0.2s',
+              boxShadow: isComparingModes ? 'none' : '0 4px 12px rgba(139,92,246,0.3)',
+              opacity: (isComparingModes || isScheduling) ? 0.7 : 1
+            }}
+            title="比較標準模式與填滿機台模式的排程結果"
+          >
+            {isComparingModes ? '📊 比較中...' : '📊 比較模式'}
           </button>
           
           <button
@@ -1195,8 +1512,8 @@ export default function SchedulingPage() {
                 // 注意：這裡只傳送「被修改的訂單」的新狀態
                 // 如果一個訂單被分割成兩塊，這兩塊都會在 modifiedOrders 裡
                 const updates = modifiedOrders.map(wo => ({
-                  id: wo.id,
-                  orderId: wo.orderId,
+                  id: wo.originalId || wo.id,  // ⭐ 使用 originalId（資料庫 ID），而非臨時的 split ID
+                  orderId: wo.originalOrderId || wo.orderId,  // 使用資料庫 UUID
                   productId: wo.productId,
                   startHour: wo.startHour,
                   endHour: wo.endHour,
@@ -1234,12 +1551,12 @@ export default function SchedulingPage() {
               fontSize: 14,
               fontWeight: 600,
               cursor: !workOrders.some(wo => wo.isModified) ? 'not-allowed' : 'pointer',
-              opacity: !workOrders.some(wo => wo.isModified) ? 0.5 : 1,
+              opacity: !workOrders.some(wo => wo.isModified) ? 0.6 : 1,
               transition: 'all 0.2s',
               boxShadow: workOrders.some(wo => wo.isModified) ? '0 4px 12px rgba(16,185,129,0.3)' : 'none'
             }}
           >
-            💾 儲存排程
+            儲存排程
           </button>
           
           <button
@@ -1251,6 +1568,7 @@ export default function SchedulingPage() {
                   const scheduledWorkOrders: WorkOrder[] = schedules.map(schedule => ({
                     id: schedule.id,
                     orderId: schedule.orderId,
+                    originalOrderId: schedule.originalOrderId,  // 資料庫 UUID
                     productId: schedule.productId,
                     machineId: schedule.machineId,
                     startHour: schedule.startHour,
@@ -1282,29 +1600,30 @@ export default function SchedulingPage() {
               fontSize: 14,
               fontWeight: 600,
               cursor: (workOrders.length === 0 || !workOrders.some(wo => wo.isModified)) ? 'not-allowed' : 'pointer',
-              opacity: (workOrders.length === 0 || !workOrders.some(wo => wo.isModified)) ? 0.5 : 1,
+              opacity: (workOrders.length === 0 || !workOrders.some(wo => wo.isModified)) ? 0.6 : 1,
               transition: 'all 0.2s',
               boxShadow: workOrders.some(wo => wo.isModified) ? '0 4px 12px rgba(245,158,11,0.3)' : 'none'
             }}
           >
-            🔄 重置調整
+            重置調整
           </button>
           
-          <button className="urgent-btn">插入急單並重排</button>
           <button 
             onClick={() => setShowDowntimeForm(true)}
             style={{
-              padding: '8px 16px',
+              padding: '10px 20px',
               background: 'linear-gradient(135deg, #ef4444, #dc2626)',
               border: 'none',
               borderRadius: 8,
               color: '#fff',
+              fontSize: 14,
               fontWeight: 600,
               cursor: 'pointer',
-              fontSize: 14
+              transition: 'all 0.2s',
+              boxShadow: '0 4px 12px rgba(239,68,68,0.3)'
             }}
           >
-            + 新增停機時段
+            新增停機時段
           </button>
         </div>
       </div>
@@ -1452,16 +1771,34 @@ export default function SchedulingPage() {
                 }}
               >
                 <div style={{ minHeight: filteredMachines.length * MACHINE_ROW_HEIGHT }}>
-                  {filteredMachines.map((machine, index) => (
-                    <div
-                      key={machine.machine_id}
-                      className={styles.machineLabel}
-                      style={{ height: MACHINE_ROW_HEIGHT }}
-                    >
-                      <div className={styles.machineLabelId}>{machine.machine_id}</div>
-                      <div className={styles.machineLabelArea}>{machine.area}區</div>
-                    </div>
-                  ))}
+                  {filteredMachines.map((machine, index) => {
+                    // 檢查當前機台在拖拽時的適配性狀態
+                    const isIncompatible = dragState && machineCompatibility[machine.machine_id] === false
+                    const isCompatible = dragState && machineCompatibility[machine.machine_id] === true
+                    
+                    return (
+                      <div
+                        key={machine.machine_id}
+                        className={styles.machineLabel}
+                        style={{ 
+                          height: MACHINE_ROW_HEIGHT,
+                          backgroundColor: isIncompatible ? 'rgba(255, 107, 107, 0.1)' : 
+                                          isCompatible ? 'rgba(76, 175, 80, 0.1)' : 
+                                          undefined,
+                          borderLeft: isIncompatible ? '3px solid #ff6b6b' : 
+                                     isCompatible ? '3px solid #4caf50' : 
+                                     undefined
+                        }}
+                      >
+                        <div className={styles.machineLabelId}>
+                          {machine.machine_id}
+                          {isIncompatible && <span style={{ color: '#ff6b6b', marginLeft: 4 }}>✗</span>}
+                          {isCompatible && <span style={{ color: '#4caf50', marginLeft: 4 }}>✓</span>}
+                        </div>
+                        <div className={styles.machineLabelArea}>{machine.area}區</div>
+                      </div>
+                    )
+                  })}
                 </div>
               </div>
             </div>
@@ -1548,13 +1885,22 @@ export default function SchedulingPage() {
                   
                   {filteredMachines.map((machine, index) => {
                     const y = index * MACHINE_ROW_HEIGHT
+                    const isIncompatible = dragState && machineCompatibility[machine.machine_id] === false
+                    const isCompatible = dragState && machineCompatibility[machine.machine_id] === true
+                    
                     return (
                       <div
                         key={machine.machine_id}
                         className={styles.timelineRow}
                         style={{
                           top: y,
-                          width: timeline.totalWidth
+                          width: timeline.totalWidth,
+                          backgroundColor: isIncompatible ? 'rgba(255, 107, 107, 0.05)' : 
+                                          isCompatible ? 'rgba(76, 175, 80, 0.05)' : 
+                                          undefined,
+                          borderTop: isIncompatible ? '2px solid rgba(255, 107, 107, 0.3)' : 
+                                    isCompatible ? '2px solid rgba(76, 175, 80, 0.3)' : 
+                                    undefined
                         }}
                       >
                         {/* Row content container */}
@@ -1646,7 +1992,17 @@ export default function SchedulingPage() {
                                     alignItems: 'center',
                                     gap: 4
                                   }}>
-                                    {order.productId}
+                                    {(() => {
+                                      // 獲取同一訂單的所有子件號
+                                      const orderKey = order.originalOrderId || order.orderId
+                                      const sameOrderItems = workOrders
+                                        .filter(wo => (wo.originalOrderId || wo.orderId) === orderKey)
+                                        .map(wo => wo.productId)
+                                        .filter((productId, index, arr) => arr.indexOf(productId) === index) // 去重
+                                        .sort()
+                                      
+                                      return sameOrderItems.length > 1 ? sameOrderItems.join('/') : order.productId
+                                    })()}
                                     {order.isSplit && order.splitPart && order.totalSplits && (
                                       <span style={{
                                         fontSize: 12,
@@ -1659,6 +2015,15 @@ export default function SchedulingPage() {
                                         {`${order.splitPart}/${order.totalSplits}`}
                                       </span>
                                     )}
+                                  </div>
+                                  <div style={{ 
+                                    fontSize: 12, 
+                                    color: 'rgba(100, 116, 139, 0.8)',
+                                    whiteSpace: 'nowrap',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis'
+                                  }}>
+                                    {formatDuration(displayEnd - displayStart)}
                                   </div>
                                 </div>
                               )
@@ -1699,6 +2064,15 @@ export default function SchedulingPage() {
                                 textOverflow: 'ellipsis'
                               }}>
                                 {dragState.order.productId}
+                              </div>
+                              <div style={{ 
+                                fontSize: 10, 
+                                color: 'rgba(100, 116, 139, 0.8)',
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis'
+                              }}>
+                                {formatDuration(dragPreview.endHour - dragPreview.startHour)}
                               </div>
                               <div style={{ 
                                 fontSize: 9, 
@@ -1742,6 +2116,26 @@ export default function SchedulingPage() {
                 <div>開始：{dragTooltip.start}</div>
                 <div>結束：{dragTooltip.end}</div>
                 <div>工時：{dragTooltip.duration}</div>
+                {incompatibleMachine && (
+                  <div style={{ 
+                    color: '#ff6b6b', 
+                    fontWeight: 'bold', 
+                    marginTop: 4,
+                    borderTop: '1px solid rgba(255,107,107,0.3)',
+                    paddingTop: 4
+                  }}>
+                    ⚠️ {incompatibleMachine}
+                  </div>
+                )}
+                {isOffWorkConflict && (
+                  <div style={{ 
+                    color: '#ffa726', 
+                    fontWeight: 'bold', 
+                    marginTop: 4
+                  }}>
+                    ⚠️ 與下班時間衝突
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1924,39 +2318,76 @@ export default function SchedulingPage() {
               
               <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
                 
-                {/* 合併設定 */}
+                {/* 排程模式設定 */}
                 <div>
                   <h3 style={{ margin: 0, marginBottom: 10, fontSize: 14, color: 'rgba(255,255,255,0.9)' }}>
-                    🔄 訂單合併設定
+                    🎯 排程模式選擇
                   </h3>
                   
-                  <label style={{ 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    padding: '10px 12px',
-                    background: 'rgba(255,255,255,0.03)',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: 6,
-                    marginBottom: 8
-                  }}>
-                    <input
-                      type="checkbox"
-                      checked={schedulingConfig.merge_enabled}
-                      onChange={(e) => setSchedulingConfig({
-                        ...schedulingConfig,
-                        merge_enabled: e.target.checked
-                      })}
-                      style={{ marginRight: 10 }}
-                    />
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 600, color: '#fff', fontSize: 13 }}>啟用相同品項合併</div>
-                      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', marginTop: 2 }}>
-                        將相同品項的訂單合併生產，減少換模次數
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <label style={{ 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      padding: '10px 12px',
+                      background: schedulingConfig.scheduling_mode === 'normal' ? 'rgba(30, 160, 233, 0.2)' : 'rgba(255,255,255,0.03)',
+                      border: `1px solid ${schedulingConfig.scheduling_mode === 'normal' ? 'rgba(30, 160, 233, 0.5)' : 'rgba(255,255,255,0.1)'}`,
+                      borderRadius: 6,
+                      cursor: 'pointer'
+                    }}>
+                      <input
+                        type="radio"
+                        name="scheduling_mode"
+                        value="normal"
+                        checked={schedulingConfig.scheduling_mode === 'normal'}
+                        onChange={(e) => setSchedulingConfig({
+                          ...schedulingConfig,
+                          scheduling_mode: e.target.value as 'normal' | 'fill_all_machines'
+                        })}
+                        style={{ marginRight: 10 }}
+                      />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 600, color: '#fff', fontSize: 13 }}>標準排程模式</div>
+                        <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', marginTop: 2 }}>
+                          按照現有邏輯進行排程，優先考慮交期和效率
+                        </div>
                       </div>
-                    </div>
-                  </label>
-                  
-                  {schedulingConfig.merge_enabled && (
+                    </label>
+                    
+                    <label style={{ 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      padding: '10px 12px',
+                      background: schedulingConfig.scheduling_mode === 'fill_all_machines' ? 'rgba(30, 160, 233, 0.2)' : 'rgba(255,255,255,0.03)',
+                      border: `1px solid ${schedulingConfig.scheduling_mode === 'fill_all_machines' ? 'rgba(30, 160, 233, 0.5)' : 'rgba(255,255,255,0.1)'}`,
+                      borderRadius: 6,
+                      cursor: 'pointer'
+                    }}>
+                      <input
+                        type="radio"
+                        name="scheduling_mode"
+                        value="fill_all_machines"
+                        checked={schedulingConfig.scheduling_mode === 'fill_all_machines'}
+                        onChange={(e) => setSchedulingConfig({
+                          ...schedulingConfig,
+                          scheduling_mode: e.target.value as 'normal' | 'fill_all_machines'
+                        })}
+                        style={{ marginRight: 10 }}
+                      />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 600, color: '#fff', fontSize: 13 }}>填滿機台模式</div>
+                        <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', marginTop: 2 }}>
+                          盡量填滿所有空閒機台，最大化產能利用率
+                        </div>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+
+                {/* 合併設定（固定啟用，僅顯示參數調整）*/}
+                <div>
+                  <h3 style={{ margin: 0, marginBottom: 10, fontSize: 14, color: 'rgba(255,255,255,0.9)' }}>
+                    🔄 自動合併設定（已啟用）
+                  </h3>
                     <div style={{ marginTop: 12, paddingLeft: 8 }}>
                       <div style={{ marginBottom: 8 }}>
                         <label style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)', display: 'block', marginBottom: 4 }}>
@@ -2014,7 +2445,6 @@ export default function SchedulingPage() {
                         </div>
                       </div>
                     </div>
-                  )}
                 </div>
                 
                 {/* 重新排程選項 */}
@@ -2184,11 +2614,26 @@ export default function SchedulingPage() {
                   否，取消排程
                 </button>
                 <button
-                  onClick={() => {
+                  onClick={async () => {
                     // Confirm: proceed with cross-day scheduling (確認：執行跨日排程)
                     if (!pendingCrossDaySchedule) return
                     
                     const { order, newStartHour, newEndHour, targetMachine } = pendingCrossDaySchedule
+                    
+                    // Check mold-machine compatibility before proceeding
+                    if (order.moldCode) {
+                      try {
+                        const compatible = await api.checkMoldMachineCompatibility(order.moldCode, targetMachine);
+                        if (!compatible) {
+                          alert('⚠️ 該模具不適配此機台，無法執行跨日排程！');
+                          setShowCrossDayDialog(false)
+                          setPendingCrossDaySchedule(null)
+                          return;
+                        }
+                      } catch (error) {
+                        console.error('Error checking mold compatibility:', error);
+                      }
+                    }
                     
                     // Find the off-work period that overlaps with this schedule
                     // (找出與此排程重疊的下班時間區間)
@@ -2287,6 +2732,80 @@ export default function SchedulingPage() {
                   是，進行跨日排程
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+        
+        {/* Failed orders dialog (失敗訂單對話框) */}
+        {showFailedOrdersDialog && failedOrders.length > 0 && (
+          <div style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0,0,0,0.7)',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 10000
+          }}>
+            <div style={{
+              background: 'linear-gradient(135deg, rgba(15, 23, 36, 0.98), rgba(20, 30, 48, 0.98))',
+              border: '1px solid rgba(239,68,68,0.3)',
+              borderRadius: 12,
+              padding: 24,
+              maxWidth: 600,
+              width: '90%',
+              maxHeight: '80vh',
+              overflow: 'auto',
+              boxShadow: '0 20px 60px rgba(0,0,0,0.5)'
+            }}>
+              <div style={{ 
+                fontSize: 18, 
+                fontWeight: 700, 
+                color: '#ef4444',
+                marginBottom: 16,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8
+              }}>
+                <span>⚠️</span>
+                <span>部分訂單未能排程</span>
+              </div>
+              
+              <div style={{ 
+                fontSize: 14, 
+                color: 'rgba(255,255,255,0.7)',
+                marginBottom: 20,
+                lineHeight: 1.6
+              }}>
+                共有 <strong style={{ color: '#ef4444', fontSize: 20 }}>{failedOrders.length}</strong> 筆訂單無法找到可用時段，請檢查：
+                <ul style={{ marginTop: 10, paddingLeft: 20 }}>
+                  <li>機台是否全部被佔滿</li>
+                  <li>訂單工時是否超過單日工作時數</li>
+                  <li>是否需要延長排程時間範圍（例如加入下個月的時間表）</li>
+                </ul>
+              </div>
+              
+              <button
+                onClick={() => setShowFailedOrdersDialog(false)}
+                style={{
+                  width: '100%',
+                  padding: '12px 16px',
+                  background: 'linear-gradient(135deg, #ef4444, #dc2626)',
+                  border: 'none',
+                  borderRadius: 6,
+                  color: '#fff',
+                  cursor: 'pointer',
+                  fontSize: 14,
+                  fontWeight: 600,
+                  boxShadow: '0 4px 12px rgba(239,68,68,0.3)'
+                }}
+              >
+                我知道了
+              </button>
             </div>
           </div>
         )}

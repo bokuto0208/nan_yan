@@ -26,20 +26,22 @@ class TimeEstimator:
         查詢半成品在特定機台的模具資訊
         
         Args:
-            component_code: 半成品品號(1開頭)
+            component_code: 半成品品號(1開頭) - 可能包含多個子件（逗號分隔）
             machine_id: 機台編號
             
         Returns:
             模具資訊,若無則返回 None
         """
-        cache_key = f"{component_code}_{machine_id}"
+        # 如果component_code包含多個子件，只使用第一個進行查詢
+        first_component = component_code.split(',')[0] if ',' in component_code else component_code
+        cache_key = f"{first_component}_{machine_id}"
         
         if cache_key in self._mold_cache:
             return self._mold_cache[cache_key]
         
         # 從 mold_calculations 查詢資料庫
         mold = self.db.query(MoldCalculation).filter(
-            MoldCalculation.component_code == component_code,
+            MoldCalculation.component_code == first_component,
             MoldCalculation.machine_id == machine_id,
             MoldCalculation.cavity_count.isnot(None),
             MoldCalculation.cavity_count > 0,
@@ -53,7 +55,7 @@ class TimeEstimator:
         # 從 MoldData 補充 frequency 和 yield_rank
         from database import MoldData
         mold_data = self.db.query(MoldData).filter(
-            MoldData.component_code == component_code,
+            MoldData.component_code == first_component,
             MoldData.machine_id == machine_id
         ).first()
         
@@ -75,20 +77,22 @@ class TimeEstimator:
         查詢半成品的換模時間（從 mold_calculations）
         
         Args:
-            component_code: 半成品品號(1開頭)
+            component_code: 半成品品號(1開頭) - 可能包含多個子件（逗號分隔）
             machine_id: 機台編號（可選，更精確）
             
         Returns:
             換模時間(分鐘),若無資料則返回預設值
         """
-        cache_key = f"{component_code}_{machine_id}" if machine_id else component_code
+        # 如果component_code包含多個子件，只使用第一個進行查詢
+        first_component = component_code.split(',')[0] if ',' in component_code else component_code
+        cache_key = f"{first_component}_{machine_id}" if machine_id else first_component
         
         if cache_key in self._changeover_cache:
             return self._changeover_cache[cache_key]
         
         # 從 mold_calculations 查詢換模時間
         query = self.db.query(MoldCalculation).filter(
-            MoldCalculation.component_code == component_code,
+            MoldCalculation.component_code == first_component,
             MoldCalculation.mold_change_time_min.isnot(None)
         )
         
@@ -119,9 +123,12 @@ class TimeEstimator:
         Returns:
             成型時間(小時)
         """
+        # 如果mo.component_code包含多個子件，只使用第一個進行查詢
+        first_component = mo.component_code.split(',')[0] if ',' in mo.component_code else mo.component_code
+        
         # 從 mold_calculations 查詢預計算的時間
         mold_calc = self.db.query(MoldCalculation).filter(
-            MoldCalculation.component_code == mo.component_code,
+            MoldCalculation.component_code == first_component,
             MoldCalculation.machine_id == mold_info.machine_id
         ).first()
         
@@ -166,11 +173,14 @@ class TimeEstimator:
         # 計算成型時間
         forming_hours = self.calculate_forming_time(mo, mold_info)
         
-        # 獲取換模時間（固定值，不按比例調整）
+        # 獲取換模時間（對於合併製令，只計算一次換模時間）
         changeover_hours = 0
         if include_changeover:
             changeover_minutes = self.get_changeover_time(mo.component_code, mold_info.machine_id)
             changeover_hours = changeover_minutes / 60
+            
+            # 對於合併的製令（包含逗號的component_code），換模時間只算一次
+            # 不需要額外處理，因為 get_changeover_time 已經只返回單一值
         
         total_hours = forming_hours + changeover_hours
         
@@ -292,8 +302,11 @@ class TimeEstimator:
         Returns:
             機台ID列表
         """
+        # 如果component_code包含多個子件，只使用第一個進行查詢
+        first_component = component_code.split(',')[0] if ',' in component_code else component_code
+        
         machines = self.db.query(MoldCalculation.machine_id).filter(
-            MoldCalculation.component_code == component_code,
+            MoldCalculation.component_code == first_component,
             MoldCalculation.machine_id.isnot(None),
             MoldCalculation.cavity_count.isnot(None),
             MoldCalculation.cavity_count > 0,

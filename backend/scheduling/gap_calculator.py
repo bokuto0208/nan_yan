@@ -110,22 +110,16 @@ class GapCalculator:
         
         if not machine_blocks:
             # 沒有現有排程，整個時間範圍都是空檔
-            # 計算所有工作區間的總時長
-            total_duration = sum((wi.end_time - wi.start_time).total_seconds() / 3600 
-                                for wi in work_intervals)
-            
-            if total_duration >= min_gap_hours and work_intervals:
+            if work_intervals:
                 # 確保開始時間不早於當天8:00
                 gap_start = self._ensure_work_start_time(work_intervals[0].start_time)
-                # 返回從第一個工作區間開始到最後一個工作區間結束的連續空檔
-                gaps.append(TimeGap(
-                    machine_id=machine_id,
-                    start_time=gap_start,
-                    end_time=work_intervals[-1].end_time,
-                    duration_hours=total_duration,
-                    is_work_time=True,
-                    has_downtime=self._has_downtime(machine_id, gap_start, work_intervals[-1].end_time)
-                ))
+                gap_end = work_intervals[-1].end_time
+                
+                # 按停機時間分割空檔
+                sub_gaps = self._split_gap_by_downtime(
+                    machine_id, gap_start, gap_end, work_intervals, min_gap_hours
+                )
+                gaps.extend(sub_gaps)
         else:
             # 有現有排程，計算排程區塊之間的空檔
             # 使用工作區間的總時長來計算
@@ -140,18 +134,11 @@ class GapCalculator:
                 gap_start = self._ensure_work_start_time(gap_start)
                 gap_end = first_block.start_time
                 
-                # 計算這段時間內的工作時長
-                duration = self._calculate_work_duration_between(gap_start, gap_end, work_intervals)
-                
-                if duration >= min_gap_hours:
-                    gaps.append(TimeGap(
-                        machine_id=machine_id,
-                        start_time=gap_start,
-                        end_time=gap_end,
-                        duration_hours=duration,
-                        is_work_time=True,
-                        has_downtime=self._has_downtime(machine_id, gap_start, gap_end)
-                    ))
+                # 按停機時間分割空檔
+                sub_gaps = self._split_gap_by_downtime(
+                    machine_id, gap_start, gap_end, work_intervals, min_gap_hours
+                )
+                gaps.extend(sub_gaps)
             
             # 中間的空檔：排程區塊之間
             for i in range(len(machine_blocks) - 1):
@@ -164,18 +151,11 @@ class GapCalculator:
                 gap_end = next_block.start_time
                 
                 if gap_end > gap_start:
-                    # 計算這段時間內的工作時長
-                    duration = self._calculate_work_duration_between(gap_start, gap_end, work_intervals)
-                    
-                    if duration >= min_gap_hours:
-                        gaps.append(TimeGap(
-                            machine_id=machine_id,
-                            start_time=gap_start,
-                            end_time=gap_end,
-                            duration_hours=duration,
-                            is_work_time=True,
-                            has_downtime=self._has_downtime(machine_id, gap_start, gap_end)
-                        ))
+                    # 按停機時間分割空檔
+                    sub_gaps = self._split_gap_by_downtime(
+                        machine_id, gap_start, gap_end, work_intervals, min_gap_hours
+                    )
+                    gaps.extend(sub_gaps)
             
             # 最後一個空檔：最後一個排程區塊到最後一個工作區間結束
             last_block = machine_blocks[-1]
@@ -187,18 +167,11 @@ class GapCalculator:
                 gap_start = self._ensure_work_start_time(gap_start)
                 gap_end = min(last_work_end, end_date)
                 
-                # 計算這段時間內的工作時長
-                duration = self._calculate_work_duration_between(gap_start, gap_end, work_intervals)
-                
-                if duration >= min_gap_hours:
-                    gaps.append(TimeGap(
-                        machine_id=machine_id,
-                        start_time=gap_start,
-                        end_time=gap_end,
-                        duration_hours=duration,
-                        is_work_time=True,
-                        has_downtime=self._has_downtime(machine_id, gap_start, gap_end)
-                    ))
+                # 按停機時間分割空檔
+                sub_gaps = self._split_gap_by_downtime(
+                    machine_id, gap_start, gap_end, work_intervals, min_gap_hours
+                )
+                gaps.extend(sub_gaps)
         
         return gaps
     
@@ -331,4 +304,82 @@ class GapCalculator:
         downtimes = self.constraint_checker.get_downtime_slots(
             machine_id, start_time, end_time
         )
-        return len(downtimes) > 0
+        return len(downtimes) > 0    
+    def _split_gap_by_downtime(
+        self,
+        machine_id: str,
+        gap_start: datetime,
+        gap_end: datetime,
+        work_intervals: List[WorkInterval],
+        min_gap_hours: float
+    ) -> List[TimeGap]:
+        """
+        將空檔按停機時間分割成多個子空檔
+        
+        Args:
+            machine_id: 機台ID
+            gap_start: 空檔開始時間
+            gap_end: 空檔結束時間
+            work_intervals: 工作區間列表
+            min_gap_hours: 最小空檔時長
+            
+        Returns:
+            List[TimeGap]: 分割後的空檔列表（排除停機時段）
+        """
+        # 獲取這段時間內的停機時段 (返回 List[Tuple[datetime, datetime]])
+        downtimes = self.constraint_checker.get_downtime_slots(
+            machine_id, gap_start, gap_end
+        )
+        
+        if not downtimes:
+            # 沒有停機，返回完整空檔
+            duration = self._calculate_work_duration_between(gap_start, gap_end, work_intervals)
+            if duration >= min_gap_hours:
+                return [TimeGap(
+                    machine_id=machine_id,
+                    start_time=gap_start,
+                    end_time=gap_end,
+                    duration_hours=duration,
+                    is_work_time=True,
+                    has_downtime=False
+                )]
+            return []
+        
+        # 有停機，按停機時段分割
+        gaps = []
+        current_start = gap_start
+        
+        # 按開始時間排序停機時段 (tuple 的第一個元素是開始時間)
+        sorted_downtimes = sorted(downtimes, key=lambda d: d[0])
+        
+        for dt_start, dt_end in sorted_downtimes:
+            # 停機前的空檔
+            if current_start < dt_start:
+                duration = self._calculate_work_duration_between(current_start, dt_start, work_intervals)
+                if duration >= min_gap_hours:
+                    gaps.append(TimeGap(
+                        machine_id=machine_id,
+                        start_time=current_start,
+                        end_time=dt_start,
+                        duration_hours=duration,
+                        is_work_time=True,
+                        has_downtime=False
+                    ))
+            
+            # 跳過停機時段
+            current_start = max(current_start, dt_end)
+        
+        # 最後一個停機後的空檔
+        if current_start < gap_end:
+            duration = self._calculate_work_duration_between(current_start, gap_end, work_intervals)
+            if duration >= min_gap_hours:
+                gaps.append(TimeGap(
+                    machine_id=machine_id,
+                    start_time=current_start,
+                    end_time=gap_end,
+                    duration_hours=duration,
+                    is_work_time=True,
+                    has_downtime=False
+                ))
+        
+        return gaps
